@@ -24,6 +24,7 @@ input unusable; keyd's emergency stop sequence is
 
 ```bash
 yay -S keyd-mapper
+sudo systemctl enable --now keyd
 ```
 
 ### From source
@@ -37,6 +38,7 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 sudo ./scripts/install-system-helper.sh
+sudo systemctl enable --now keyd
 keyd-mapper
 ```
 
@@ -50,6 +52,8 @@ application session and exits when KeydMapper closes.
 python -m pip install -e ".[dev]"
 QT_QPA_PLATFORM=offscreen pytest KeydMapper/tests
 ```
+
+See [RELEASING.md](RELEASING.md) for the GitHub and AUR release checklist.
 
 ## License
 
