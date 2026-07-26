@@ -149,6 +149,8 @@ class KeydSourceEditor(QPlainTextEdit):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        # Allow navigation targets near EOF to be aligned with the viewport top.
+        self.setCenterOnScroll(True)
         self.setTabStopDistance(self.fontMetrics().horizontalAdvance(" ") * 4)
         self.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.setStyleSheet(
@@ -205,6 +207,10 @@ class KeydSourceEditor(QPlainTextEdit):
         """Return gutter width for the current number of blocks."""
         digits = len(str(max(1, self.blockCount())))
         return 10 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def scroll_line_to_top(self, line_number: int) -> None:
+        """Align a document line with the top edge of the code viewport."""
+        self.verticalScrollBar().setValue(max(0, line_number))
 
     def _update_line_number_area_width(self, _count: int = 0) -> None:
         self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)

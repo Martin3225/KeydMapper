@@ -404,28 +404,38 @@ def test_layer_change_scrolls_generated_config_to_layer_declaration():
     nav_item = editor.layer_list.findItems("nav", Qt.MatchFlag.MatchExactly)[0]
     editor.layer_list.setCurrentItem(nav_item)
 
-    assert editor.source_editor.textCursor().block().text() == "[nav]"
+    cursor = editor.source_editor.textCursor()
+    assert cursor.block().text() == "[nav]"
+    assert editor.source_editor.verticalScrollBar().value() == cursor.blockNumber()
 
 
 def test_selecting_mapped_key_scrolls_to_binding_in_active_layer():
     """A mapped key reveals the exact binding line, not only the section."""
     editor, _, key = _create_live_editor_with_selected_key()
     editor.set_key_mapping(key, "right")
+    editor.source_editor.scroll_line_to_top = MagicMock()
+    editor.source_editor.ensureCursorVisible = MagicMock()
 
     editor._on_selection_changed()
 
     assert editor.source_editor.textCursor().selectedText() == "a = right"
+    editor.source_editor.ensureCursorVisible.assert_called()
+    editor.source_editor.scroll_line_to_top.assert_not_called()
 
 
 def test_selecting_unmapped_key_scrolls_to_active_layer_declaration():
     """Without a binding, key selection falls back to the active layer header."""
     editor, _, _ = _create_live_editor_with_selected_key()
+    editor.source_editor.scroll_line_to_top = MagicMock()
+    editor.source_editor.ensureCursorVisible = MagicMock()
 
     editor._on_selection_changed()
 
     cursor = editor.source_editor.textCursor()
     assert cursor.block().text() == "[main]"
     assert cursor.hasSelection() is False
+    editor.source_editor.ensureCursorVisible.assert_called()
+    editor.source_editor.scroll_line_to_top.assert_not_called()
 
 
 def test_layer_rail_creation_does_not_remap_selected_key():

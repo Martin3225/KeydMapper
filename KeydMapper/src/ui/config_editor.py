@@ -686,7 +686,10 @@ class ConfigEditor(BaseEditor):
         if key and target_line != layer_line:
             cursor.select(QTextCursor.SelectionType.LineUnderCursor)
         self.source_editor.setTextCursor(cursor)
-        self.source_editor.ensureCursorVisible()
+        if key is None:
+            self.source_editor.scroll_line_to_top(target_line)
+        else:
+            self.source_editor.ensureCursorVisible()
 
     @property
     def _active_action(self) -> ConfigActionWidget:
