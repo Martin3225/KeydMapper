@@ -25,7 +25,6 @@ class BaseEditor(QWidget):
     save_requested = Signal()
     cancel_requested = Signal()
 
-    # @generated [partially] Gemini 3.1: Graphics and styling adjustments
     def __init__(
         self,
         context: EditorContext,

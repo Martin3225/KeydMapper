@@ -30,7 +30,6 @@ class LayoutView(QGraphicsView):
         self._pan_active = False
         self._pan_last: QPoint | None = None
 
-    # @generated [partially] Gemini 3.1: Fix RuntimeError when disconnecting signals
     def disconnect_signals(self) -> None:
         """Safely disconnects all custom signals."""
         with warnings.catch_warnings():

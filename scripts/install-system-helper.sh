@@ -10,10 +10,10 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-install -d -o root -g root -m 0755 /usr/libexec
+install -d -o root -g root -m 0755 /usr/lib/keyd-mapper
 install -o root -g root -m 0755 \
     "$project_dir/system/keyd-mapper-helper.py" \
-    /usr/libexec/keyd-mapper-helper
+    /usr/lib/keyd-mapper/keyd-mapper-helper
 
 install -d -o root -g root -m 0755 /usr/share/polkit-1/actions
 install -o root -g root -m 0644 \

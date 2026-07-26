@@ -1,27 +1,52 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=77.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "keydmapper"
 version = "0.1.0"
-description = "A GUI desktop application for creating, editing, and managing keyd configuration files."
+description = "A visual editor for keyd configuration files"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Martin Vacek" },
+]
 dependencies = [
-    "PySide6==6.11.0",
-    "PySide6_Addons==6.11.0",
-    "PySide6_Essentials==6.11.0",
-    "shiboken6==6.11.0",
+    "PySide6>=6.8,<7",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment",
+    "Topic :: System :: Hardware",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build>=1.2",
     "pytest>=8.0.0",
-    "pylint"
+    "pylint>=3.0",
 ]
 
 [project.scripts]
 keyd-mapper = "main:main"
 
-[tool.setuptools.package-dir]
-"" = "KeydMapper/src"
+[project.urls]
+Homepage = "https://github.com/Martin3225/KeydMapper"
+Issues = "https://github.com/Martin3225/KeydMapper/issues"
+Source = "https://github.com/Martin3225/KeydMapper"
+
+[tool.setuptools]
+package-dir = { "" = "KeydMapper/src" }
+py-modules = ["constants", "main"]
 
 [tool.setuptools.packages.find]
 where = ["KeydMapper/src"]
+
+[tool.setuptools.package-data]
+keyd = ["resources/*.layout"]

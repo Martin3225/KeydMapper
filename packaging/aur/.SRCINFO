@@ -1,0 +1,22 @@
+pkgbase = keyd-mapper
+	pkgdesc = Visual editor for keyd configuration files
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/Martin3225/KeydMapper
+	arch = any
+	license = MIT
+	checkdepends = python-pylint
+	checkdepends = python-pytest
+	makedepends = git
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = keyd
+	depends = pyside6
+	depends = polkit
+	depends = python
+	source = git+https://github.com/Martin3225/KeydMapper.git#tag=v0.1.0
+	b2sums = SKIP
+
+pkgname = keyd-mapper

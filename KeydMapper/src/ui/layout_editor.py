@@ -27,7 +27,6 @@ from ui.load_layout_dialog import LoadLayoutDialog
 from ui.record_button import RecordButton
 
 
-# @generated [partially] Gemini 3.1: Graphics and styling adjustments
 # Number of attributes is high due to the UI layout
 # pylint: disable=too-many-instance-attributes
 class LayoutEditor(BaseEditor):

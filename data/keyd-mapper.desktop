@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=KeydMapper
+Comment=Create and manage keyd keyboard mappings
+Exec=keyd-mapper
+Icon=keyd-mapper
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=keyboard;mouse;keyd;keymap;remap;
+StartupNotify=true

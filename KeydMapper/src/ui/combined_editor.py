@@ -17,7 +17,6 @@ from ui.layout_editor import LayoutEditor
 from ui.layout_view import SCENE_HEIGHT, SCENE_WIDTH, LayoutView
 
 
-# @generated [partially] Gemini 3.1: Graphics and styling adjustments, doc strings
 # Number of attributes is high due to the UI layout
 # pylint: disable=too-many-instance-attributes,too-few-public-methods
 class CombinedEditor(QWidget):

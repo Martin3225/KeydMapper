@@ -11,7 +11,7 @@ import subprocess
 import threading
 
 
-HELPER_PATH = "/usr/libexec/keyd-mapper-helper"
+HELPER_PATH = "/usr/lib/keyd-mapper/keyd-mapper-helper"
 HELPER_PYTHON = "/usr/bin/python3"
 POLICY_PATH = (
     "/usr/share/polkit-1/actions/"

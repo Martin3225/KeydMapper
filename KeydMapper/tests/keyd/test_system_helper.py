@@ -82,7 +82,7 @@ def test_client_reuses_pinned_helper_and_sends_json_over_stdin():
         [
             "pkexec",
             "/usr/bin/python3",
-            "/usr/libexec/keyd-mapper-helper",
+            "/usr/lib/keyd-mapper/keyd-mapper-helper",
             "session",
         ],
         stdin=system_helper.subprocess.PIPE,
@@ -149,7 +149,7 @@ def test_polkit_policy_pins_helper_without_global_authorization_cache():
     assert annotations["org.freedesktop.policykit.exec.path"] == "/usr/bin/python3"
     assert (
         annotations["org.freedesktop.policykit.exec.argv1"]
-        == "/usr/libexec/keyd-mapper-helper"
+        == "/usr/lib/keyd-mapper/keyd-mapper-helper"
     )
 
 

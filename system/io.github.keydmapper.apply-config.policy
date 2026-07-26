@@ -13,6 +13,6 @@
       <allow_active>auth_admin</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/python3</annotate>
-    <annotate key="org.freedesktop.policykit.exec.argv1">/usr/libexec/keyd-mapper-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">/usr/lib/keyd-mapper/keyd-mapper-helper</annotate>
   </action>
 </policyconfig>
