@@ -21,7 +21,9 @@ build() {
 
 check() {
     cd KeydMapper
-    QT_QPA_PLATFORM=offscreen pytest -q -o addopts="" \
+    PYTHONPATH="$srcdir/KeydMapper/KeydMapper/src" \
+        QT_QPA_PLATFORM=offscreen \
+        pytest -q -o addopts="" \
         --ignore=KeydMapper/tests/test_pylint.py \
         KeydMapper/tests
 }
