@@ -254,6 +254,26 @@ def test_reworked_layout_shows_binding_and_config_at_the_same_time():
     assert not hasattr(editor, "panel_tabs")
 
 
+def test_config_editor_features_live_in_focused_modules():
+    """The main editor remains an orchestrator instead of regaining all logic."""
+    assert (
+        ConfigEditor._sync_source_editor.__module__
+        == "ui.config_editor_source"
+    )
+    assert (
+        ConfigEditor._record_history.__module__
+        == "ui.config_editor_history"
+    )
+    assert (
+        ConfigEditor.enter_layout_mode.__module__
+        == "ui.config_editor_layout"
+    )
+    assert (
+        ConfigEditor.set_key_mapping.__module__
+        == "ui.config_editor_bindings"
+    )
+
+
 def test_editor_panels_have_no_artificial_resize_limits():
     """Both horizontal rails and the vertical inspector may be dragged freely."""
     editor, _, _ = _create_live_editor_with_selected_key()
@@ -425,7 +445,7 @@ def test_keyd_action_is_loaded_as_normalized_visual_form():
     editor._on_selection_changed()
 
     assert editor._action_selector.currentText() == "Keyd action"
-    assert editor.keyd_action.current_action_id == "layer"
+    assert editor.keyd_action.current_action_name == "layer"
     assert editor.keyd_action._macro_checkbox.isChecked() is True
     assert editor.keyd_action._macro_input.text() == "macro(C-a)"
 
@@ -514,7 +534,7 @@ def test_layer_rail_creation_does_not_remap_selected_key():
     editor.set_key_mapping(key, "left")
 
     with patch(
-        "ui.config_editor.QInputDialog.getText",
+        "ui.config_editor_bindings.QInputDialog.getText",
         return_value=("nav:C", True),
     ):
         editor._create_new_layer()

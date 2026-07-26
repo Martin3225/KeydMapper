@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from keyd.actions import (
-    ACTION_BY_ID,
+    ACTION_BY_NAME,
     ACTION_SPECS,
     ActionField,
+    ActionFieldKind,
     action_completions,
     format_action,
     parse_action,
@@ -58,7 +59,7 @@ class KeydActionEditor(ConfigActionWidget):
 
         self._action_selector = QComboBox()
         for spec in ACTION_SPECS:
-            self._action_selector.addItem(spec.label, spec.action_id)
+            self._action_selector.addItem(spec.label, spec.keyd_function)
         self._action_selector.currentIndexChanged.connect(
             self._on_action_changed
         )
@@ -104,8 +105,8 @@ class KeydActionEditor(ConfigActionWidget):
         self.on_selection_changed(None)
 
     @property
-    def current_action_id(self) -> str:
-        """Return the normalized action selected in the form."""
+    def current_action_name(self) -> str:
+        """Return the normalized keyd action selected in the form."""
         return str(self._action_selector.currentData())
 
     def on_selection_changed(self, key_item: KeyItem | None) -> None:
@@ -125,10 +126,10 @@ class KeydActionEditor(ConfigActionWidget):
                 self._clear_form()
                 return
 
-            index = self._action_selector.findData(parsed.action_id)
+            index = self._action_selector.findData(parsed.action_name)
             self._action_selector.setCurrentIndex(index)
             self._rebuild_fields()
-            spec = ACTION_BY_ID[parsed.action_id]
+            spec = ACTION_BY_NAME[parsed.action_name]
             for field, value in zip(spec.fields, parsed.arguments):
                 self._set_field_value(field, value)
             self._macro_checkbox.setChecked(bool(parsed.macro))
@@ -166,17 +167,17 @@ class KeydActionEditor(ConfigActionWidget):
             self._fields_layout.removeRow(0)
         self._field_widgets.clear()
 
-        spec = ACTION_BY_ID[self.current_action_id]
-        self._description.setText(spec.description)
+        spec = ACTION_BY_NAME[self.current_action_name]
+        self._description.setText(spec.help_text)
         for field in spec.fields:
             widget = self._create_field_widget(field)
-            self._field_widgets[field.name] = widget
+            self._field_widgets[field.argument_id] = widget
             self._fields_layout.addRow(f"{field.label}:", widget)
         self._update_additional_controls()
 
     def _create_field_widget(self, field: ActionField) -> QWidget:
         """Create the appropriate control for one action argument."""
-        if field.kind == "layer":
+        if field.input_kind is ActionFieldKind.LAYER_NAME:
             widget = QComboBox()
             widget.setEditable(True)
             for layer_name in self.editor.config.layer_order:
@@ -184,22 +185,25 @@ class KeydActionEditor(ConfigActionWidget):
                 if widget.findText(base_name) < 0:
                     widget.addItem(base_name)
             widget.setCurrentIndex(-1)
-            widget.setPlaceholderText(field.placeholder)
+            widget.setPlaceholderText(field.example)
             widget.currentTextChanged.connect(self._apply)
             return widget
 
-        if field.kind == "timeout":
+        if field.input_kind is ActionFieldKind.TIMEOUT_MS:
             widget = QSpinBox()
             widget.setRange(0, 2_147_483_647)
             widget.setSuffix(" ms")
-            widget.setValue(DEFAULT_TIMEOUTS.get(field.name, 0))
+            widget.setValue(DEFAULT_TIMEOUTS.get(field.argument_id, 0))
             widget.valueChanged.connect(self._apply)
             return widget
 
         widget = QLineEdit()
-        widget.setPlaceholderText(field.placeholder)
+        widget.setPlaceholderText(field.example)
         widget.textEdited.connect(self._apply)
-        if field.kind in {"key", "action"}:
+        if field.input_kind in {
+            ActionFieldKind.KEY_SEQUENCE,
+            ActionFieldKind.ACTION_EXPRESSION,
+        }:
             self._add_keyd_completer(widget)
         return widget
 
@@ -227,13 +231,13 @@ class KeydActionEditor(ConfigActionWidget):
         self._apply()
 
     def _update_additional_controls(self) -> None:
-        spec = ACTION_BY_ID[self.current_action_id]
-        supports_macro = spec.macro_variant is not None
+        spec = ACTION_BY_NAME[self.current_action_name]
+        supports_macro = spec.macro_function is not None
         self._macro_checkbox.setVisible(supports_macro)
         self._macro_input.setVisible(
             supports_macro and self._macro_checkbox.isChecked()
         )
-        supports_held_key = spec.action_id == "oneshot"
+        supports_held_key = spec.held_key_function is not None
         self._held_key_checkbox.setVisible(supports_held_key)
         self._held_key_input.setVisible(
             supports_held_key and self._held_key_checkbox.isChecked()
@@ -241,7 +245,7 @@ class KeydActionEditor(ConfigActionWidget):
 
     def _clear_form(self) -> None:
         """Clear stale values when the binding is literal or absent."""
-        for field in ACTION_BY_ID[self.current_action_id].fields:
+        for field in ACTION_BY_NAME[self.current_action_name].fields:
             self._set_field_value(field, "")
         self._macro_checkbox.setChecked(False)
         self._macro_input.clear()
@@ -250,7 +254,7 @@ class KeydActionEditor(ConfigActionWidget):
         self._update_additional_controls()
 
     def _set_field_value(self, field: ActionField, value: str) -> None:
-        widget = self._field_widgets[field.name]
+        widget = self._field_widgets[field.argument_id]
         if isinstance(widget, QSpinBox):
             widget.setValue(int(value) if value.isdigit() else 0)
         elif isinstance(widget, QComboBox):
@@ -259,7 +263,7 @@ class KeydActionEditor(ConfigActionWidget):
             widget.setText(value)
 
     def _field_value(self, field: ActionField) -> str:
-        widget = self._field_widgets[field.name]
+        widget = self._field_widgets[field.argument_id]
         if isinstance(widget, QSpinBox):
             return str(widget.value())
         if isinstance(widget, QComboBox):
@@ -276,7 +280,7 @@ class KeydActionEditor(ConfigActionWidget):
         if key_item is None:
             return
 
-        spec = ACTION_BY_ID[self.current_action_id]
+        spec = ACTION_BY_NAME[self.current_action_name]
         arguments = tuple(self._field_value(field) for field in spec.fields)
         missing = any(not value for value in arguments)
         macro = self._macro_input.text().strip()
@@ -289,7 +293,7 @@ class KeydActionEditor(ConfigActionWidget):
             return
 
         value = format_action(
-            spec.action_id,
+            spec.keyd_function,
             arguments,
             macro=macro if self._macro_checkbox.isChecked() else "",
             held_key=(

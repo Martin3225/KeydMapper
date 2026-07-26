@@ -77,7 +77,7 @@ def test_existing_macro_variant_loads_as_base_action_and_option():
     """Manual low-level syntax round-trips to the normalized visual controls."""
     action, _, _ = _create_action("swapm(nav, macro(C-left))")
 
-    assert action.current_action_id == "swap"
+    assert action.current_action_name == "swap"
     assert action._field_widgets["layer"].currentText() == "nav"
     assert action._macro_checkbox.isChecked() is True
     assert action._macro_input.text() == "macro(C-left)"
@@ -89,7 +89,7 @@ def test_existing_nested_action_populates_each_documented_field():
         "timeout(layer(nav), 250, macro(C-a C-c))"
     )
 
-    assert action.current_action_id == "timeout"
+    assert action.current_action_name == "timeout"
     assert action._field_widgets["action"].text() == "layer(nav)"
     assert action._field_widgets["timeout"].value() == 250
     assert (

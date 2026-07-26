@@ -5,8 +5,13 @@ import shutil
 import pytest
 
 from keyd.actions import (
-    ACTION_BY_ID,
+    ACTION_BY_NAME,
     ACTION_SPECS,
+    KEY_ARGUMENT,
+    MACRO_BODY_ARGUMENT,
+    MACRO_EXPRESSION_ARGUMENT,
+    SHELL_COMMAND_ARGUMENT,
+    ActionFieldKind,
     action_completions,
     format_action,
     parse_action,
@@ -64,6 +69,23 @@ ACTION_CASES = (
 )
 
 
+def test_action_fields_separate_argument_identity_from_ui_semantics():
+    """Named fields explain values that used to look like repeated strings."""
+    assert KEY_ARGUMENT.argument_id == "key"
+    assert KEY_ARGUMENT.input_kind is ActionFieldKind.KEY_SEQUENCE
+    assert SHELL_COMMAND_ARGUMENT.argument_id == "command"
+    assert (
+        SHELL_COMMAND_ARGUMENT.input_kind
+        is ActionFieldKind.SHELL_COMMAND
+    )
+    assert MACRO_BODY_ARGUMENT.argument_id == "macro"
+    assert MACRO_EXPRESSION_ARGUMENT.argument_id == "macro"
+    assert (
+        MACRO_BODY_ARGUMENT.input_kind
+        is not MACRO_EXPRESSION_ARGUMENT.input_kind
+    )
+
+
 @pytest.mark.parametrize(("action_id", "arguments", "expected"), ACTION_CASES)
 def test_all_visual_actions_format_and_round_trip(action_id, arguments, expected):
     """Every catalogue entry has stable generated and parsed syntax."""
@@ -72,9 +94,9 @@ def test_all_visual_actions_format_and_round_trip(action_id, arguments, expected
     assert generated == expected
     parsed = parse_action(generated)
     assert parsed is not None
-    assert parsed.action_id == action_id
+    assert parsed.action_name == action_id
     assert parsed.arguments == arguments
-    assert format_action(parsed.action_id, parsed.arguments) == expected
+    assert format_action(parsed.action_name, parsed.arguments) == expected
 
 
 @pytest.mark.parametrize(
@@ -89,7 +111,7 @@ def test_all_visual_actions_format_and_round_trip(action_id, arguments, expected
 )
 def test_parallel_macro_is_a_property_of_the_base_action(action_id, function):
     """Internal macro spellings never become separate visual action types."""
-    spec = ACTION_BY_ID[action_id]
+    spec = ACTION_BY_NAME[action_id]
     arguments = ("nav",) if spec.fields else ()
     generated = format_action(
         action_id,
@@ -102,7 +124,7 @@ def test_parallel_macro_is_a_property_of_the_base_action(action_id, function):
     )
     parsed = parse_action(generated)
     assert parsed is not None
-    assert parsed.action_id == action_id
+    assert parsed.action_name == action_id
     assert parsed.arguments == arguments
     assert parsed.macro == "macro(C-a C-c)"
 
@@ -114,7 +136,7 @@ def test_oneshot_held_key_is_a_property_of_oneshot():
     assert generated == "oneshotk(nav, a)"
     parsed = parse_action(generated)
     assert parsed is not None
-    assert parsed.action_id == "oneshot"
+    assert parsed.action_name == "oneshot"
     assert parsed.arguments == ("nav",)
     assert parsed.held_key == "a"
 
@@ -165,10 +187,14 @@ def test_catalogue_and_completions_cover_every_low_level_action():
     """The source editor still suggests real keyd spellings when edited by hand."""
     completions = set(action_completions())
     for spec in ACTION_SPECS:
-        spelling = spec.function if spec.function == "noop" else f"{spec.function}()"
+        spelling = (
+            spec.keyd_function
+            if spec.keyd_function == "noop"
+            else f"{spec.keyd_function}()"
+        )
         assert spelling in completions
-        if spec.macro_variant:
-            assert f"{spec.macro_variant}()" in completions
+        if spec.macro_function:
+            assert f"{spec.macro_function}()" in completions
     assert "oneshotk()" in completions
 
 

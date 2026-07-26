@@ -3,208 +3,275 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
+
+
+class ActionFieldKind(str, Enum):
+    """Input semantics used by the visual action form."""
+
+    LAYER_NAME = "layer_name"
+    KEY_SEQUENCE = "key_sequence"
+    ACTION_EXPRESSION = "action_expression"
+    TIMEOUT_MS = "timeout_ms"
+    MACRO_BODY = "macro_body"
+    MACRO_EXPRESSION = "macro_expression"
+    SHELL_COMMAND = "shell_command"
 
 
 @dataclass(frozen=True)
 class ActionField:
-    """One user-editable argument of a keyd action."""
+    """One documented argument of a keyd function.
 
-    name: str
+    ``argument_id`` identifies the value inside the normalized model.
+    ``input_kind`` tells the UI which control and completion rules to use.
+    They are intentionally independent even when their words happen to match.
+    """
+
+    argument_id: str
     label: str
-    kind: str
-    placeholder: str = ""
+    input_kind: ActionFieldKind
+    example: str = ""
 
 
 @dataclass(frozen=True)
 class ActionSpec:
-    """User-facing definition of a keyd action."""
+    """User-facing definition of one normalized keyd action."""
 
-    action_id: str
+    keyd_function: str
     label: str
-    function: str
     fields: tuple[ActionField, ...]
-    description: str
-    macro_variant: str | None = None
+    help_text: str
+    macro_function: str | None = None
+    held_key_function: str | None = None
 
 
 @dataclass(frozen=True)
 class ParsedAction:
     """A low-level keyd expression normalized to its user-facing action."""
 
-    action_id: str
+    action_name: str
     arguments: tuple[str, ...]
     macro: str = ""
     held_key: str = ""
 
-    def value(self, field_name: str) -> str:
-        """Return the parsed value belonging to ``field_name``."""
-        spec = ACTION_BY_ID[self.action_id]
-        for index, field in enumerate(spec.fields):
-            if field.name == field_name:
-                return self.arguments[index]
-        return ""
 
-
-LAYER = ActionField("layer", "Layer", "layer", "nav")
-LAYOUT = ActionField("layout", "Layout", "layer", "colemak")
-ACTION = ActionField("action", "Action", "action", "esc or macro(C-c)")
-SECOND_ACTION = ActionField(
-    "second_action", "Fallback action", "action", "layer(nav)"
+LAYER_ARGUMENT = ActionField(
+    argument_id="layer",
+    label="Layer",
+    input_kind=ActionFieldKind.LAYER_NAME,
+    example="nav",
 )
-TIMEOUT = ActionField("timeout", "Timeout", "timeout", "200")
-IDLE_TIMEOUT = ActionField("idle_timeout", "Idle timeout", "timeout", "1000")
-HOLD_TIMEOUT = ActionField("hold_timeout", "Hold timeout", "timeout", "200")
-REPEAT_TIMEOUT = ActionField(
-    "repeat_timeout", "Repeat timeout", "timeout", "50"
+LAYOUT_ARGUMENT = ActionField(
+    argument_id="layout",
+    label="Layout",
+    input_kind=ActionFieldKind.LAYER_NAME,
+    example="colemak",
 )
-KEY = ActionField("key", "Key", "key", "a")
-MACRO_BODY = ActionField(
-    "macro", "Sequence", "macro_body", "C-a C-c"
+ACTION_ARGUMENT = ActionField(
+    argument_id="action",
+    label="Action",
+    input_kind=ActionFieldKind.ACTION_EXPRESSION,
+    example="esc or macro(C-c)",
 )
-MACRO_EXPRESSION = ActionField(
-    "macro", "Macro", "macro", "macro(C-a C-c)"
+FALLBACK_ACTION_ARGUMENT = ActionField(
+    argument_id="second_action",
+    label="Fallback action",
+    input_kind=ActionFieldKind.ACTION_EXPRESSION,
+    example="layer(nav)",
 )
-COMMAND = ActionField(
-    "command", "Shell command", "command", "notify-send 'keyd'"
+TIMEOUT_ARGUMENT = ActionField(
+    argument_id="timeout",
+    label="Timeout",
+    input_kind=ActionFieldKind.TIMEOUT_MS,
+    example="200",
+)
+IDLE_TIMEOUT_ARGUMENT = ActionField(
+    argument_id="idle_timeout",
+    label="Idle timeout",
+    input_kind=ActionFieldKind.TIMEOUT_MS,
+    example="1000",
+)
+HOLD_TIMEOUT_ARGUMENT = ActionField(
+    argument_id="hold_timeout",
+    label="Hold timeout",
+    input_kind=ActionFieldKind.TIMEOUT_MS,
+    example="200",
+)
+REPEAT_TIMEOUT_ARGUMENT = ActionField(
+    argument_id="repeat_timeout",
+    label="Repeat timeout",
+    input_kind=ActionFieldKind.TIMEOUT_MS,
+    example="50",
+)
+KEY_ARGUMENT = ActionField(
+    argument_id="key",
+    label="Key",
+    input_kind=ActionFieldKind.KEY_SEQUENCE,
+    example="a",
+)
+MACRO_BODY_ARGUMENT = ActionField(
+    argument_id="macro",
+    label="Sequence",
+    input_kind=ActionFieldKind.MACRO_BODY,
+    example="C-a C-c",
+)
+MACRO_EXPRESSION_ARGUMENT = ActionField(
+    argument_id="macro",
+    label="Macro",
+    input_kind=ActionFieldKind.MACRO_EXPRESSION,
+    example="macro(C-a C-c)",
+)
+SHELL_COMMAND_ARGUMENT = ActionField(
+    argument_id="command",
+    label="Shell command",
+    input_kind=ActionFieldKind.SHELL_COMMAND,
+    example="notify-send 'keyd'",
 )
 
 
 ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
-        "macro",
-        "Macro",
-        "macro",
-        (MACRO_BODY,),
-        "Press a sequence of keys.",
+        keyd_function="macro",
+        label="Macro",
+        fields=(MACRO_BODY_ARGUMENT,),
+        help_text="Press a sequence of keys.",
     ),
     ActionSpec(
-        "layer",
-        "Hold layer",
-        "layer",
-        (LAYER,),
-        "Activate a layer while this key is held.",
-        macro_variant="layerm",
+        keyd_function="layer",
+        label="Hold layer",
+        fields=(LAYER_ARGUMENT,),
+        help_text="Activate a layer while this key is held.",
+        macro_function="layerm",
     ),
     ActionSpec(
-        "oneshot",
-        "One-shot layer",
-        "oneshot",
-        (LAYER,),
-        "Apply a layer to the next key press.",
-        macro_variant="oneshotm",
+        keyd_function="oneshot",
+        label="One-shot layer",
+        fields=(LAYER_ARGUMENT,),
+        help_text="Apply a layer to the next key press.",
+        macro_function="oneshotm",
+        held_key_function="oneshotk",
     ),
     ActionSpec(
-        "swap",
-        "Swap layer",
-        "swap",
-        (LAYER,),
-        "Replace the currently active layer.",
-        macro_variant="swapm",
+        keyd_function="swap",
+        label="Swap layer",
+        fields=(LAYER_ARGUMENT,),
+        help_text="Replace the currently active layer.",
+        macro_function="swapm",
     ),
     ActionSpec(
-        "toggle",
-        "Toggle layer",
-        "toggle",
-        (LAYER,),
-        "Toggle a layer on or off.",
-        macro_variant="togglem",
+        keyd_function="toggle",
+        label="Toggle layer",
+        fields=(LAYER_ARGUMENT,),
+        help_text="Toggle a layer on or off.",
+        macro_function="togglem",
     ),
     ActionSpec(
-        "setlayout",
-        "Set layout",
-        "setlayout",
-        (LAYOUT,),
-        "Switch to a layout and clear the active layers.",
+        keyd_function="setlayout",
+        label="Set layout",
+        fields=(LAYOUT_ARGUMENT,),
+        help_text="Switch to a layout and clear the active layers.",
     ),
     ActionSpec(
-        "clear",
-        "Clear active layers",
-        "clear",
-        (),
-        "Clear every active layer.",
-        macro_variant="clearm",
+        keyd_function="clear",
+        label="Clear active layers",
+        fields=(),
+        help_text="Clear every active layer.",
+        macro_function="clearm",
     ),
     ActionSpec(
-        "repeat",
-        "Repeat last action",
-        "repeat",
-        (),
-        "Repeat the last executed action.",
+        keyd_function="repeat",
+        label="Repeat last action",
+        fields=(),
+        help_text="Repeat the last executed action.",
     ),
     ActionSpec(
-        "overload",
-        "Tap or hold",
-        "overload",
-        (LAYER, ACTION),
-        "Use a layer while held and execute an action when tapped.",
+        keyd_function="overload",
+        label="Tap or hold",
+        fields=(LAYER_ARGUMENT, ACTION_ARGUMENT),
+        help_text="Use a layer while held and execute an action when tapped.",
     ),
     ActionSpec(
-        "overloadt",
-        "Tap or hold after timeout",
-        "overloadt",
-        (LAYER, ACTION, TIMEOUT),
-        "Resolve a tap after a fixed timeout.",
+        keyd_function="overloadt",
+        label="Tap or hold after timeout",
+        fields=(LAYER_ARGUMENT, ACTION_ARGUMENT, TIMEOUT_ARGUMENT),
+        help_text="Resolve a tap after a fixed timeout.",
     ),
     ActionSpec(
-        "overloadt2",
-        "Permissive tap or hold",
-        "overloadt2",
-        (LAYER, ACTION, TIMEOUT),
-        "Prefer the hold action when another key is pressed.",
+        keyd_function="overloadt2",
+        label="Permissive tap or hold",
+        fields=(LAYER_ARGUMENT, ACTION_ARGUMENT, TIMEOUT_ARGUMENT),
+        help_text="Prefer the hold action when another key is pressed.",
     ),
     ActionSpec(
-        "overloadi",
-        "Idle-sensitive action",
-        "overloadi",
-        (ACTION, SECOND_ACTION, IDLE_TIMEOUT),
-        "Choose an action based on the time since the previous key press.",
+        keyd_function="overloadi",
+        label="Idle-sensitive action",
+        fields=(
+            ACTION_ARGUMENT,
+            FALLBACK_ACTION_ARGUMENT,
+            IDLE_TIMEOUT_ARGUMENT,
+        ),
+        help_text=(
+            "Choose an action based on the time since the previous key press."
+        ),
     ),
     ActionSpec(
-        "lettermod",
-        "Letter modifier",
-        "lettermod",
-        (LAYER, KEY, IDLE_TIMEOUT, HOLD_TIMEOUT),
-        "Use a layer on hold and a key on tap, optimized for typing.",
+        keyd_function="lettermod",
+        label="Letter modifier",
+        fields=(
+            LAYER_ARGUMENT,
+            KEY_ARGUMENT,
+            IDLE_TIMEOUT_ARGUMENT,
+            HOLD_TIMEOUT_ARGUMENT,
+        ),
+        help_text="Use a layer on hold and a key on tap, optimized for typing.",
     ),
     ActionSpec(
-        "timeout",
-        "Timeout action",
-        "timeout",
-        (ACTION, TIMEOUT, SECOND_ACTION),
-        "Choose an action based on how long the key is held.",
+        keyd_function="timeout",
+        label="Timeout action",
+        fields=(
+            ACTION_ARGUMENT,
+            TIMEOUT_ARGUMENT,
+            FALLBACK_ACTION_ARGUMENT,
+        ),
+        help_text="Choose an action based on how long the key is held.",
     ),
     ActionSpec(
-        "macro2",
-        "Timed macro",
-        "macro2",
-        (TIMEOUT, REPEAT_TIMEOUT, MACRO_EXPRESSION),
-        "Run a macro with custom sequence and repeat timeouts.",
+        keyd_function="macro2",
+        label="Timed macro",
+        fields=(
+            TIMEOUT_ARGUMENT,
+            REPEAT_TIMEOUT_ARGUMENT,
+            MACRO_EXPRESSION_ARGUMENT,
+        ),
+        help_text="Run a macro with custom sequence and repeat timeouts.",
     ),
     ActionSpec(
-        "command",
-        "Run command",
-        "command",
-        (COMMAND,),
-        "Execute a shell command asynchronously.",
+        keyd_function="command",
+        label="Run command",
+        fields=(SHELL_COMMAND_ARGUMENT,),
+        help_text="Execute a shell command asynchronously.",
     ),
     ActionSpec(
-        "noop",
-        "Do nothing",
-        "noop",
-        (),
-        "Ignore the key.",
+        keyd_function="noop",
+        label="Do nothing",
+        fields=(),
+        help_text="Ignore the key.",
     ),
 )
 
-ACTION_BY_ID = {spec.action_id: spec for spec in ACTION_SPECS}
-ACTION_BY_FUNCTION = {spec.function: spec for spec in ACTION_SPECS}
+ACTION_BY_NAME = {spec.keyd_function: spec for spec in ACTION_SPECS}
 MACRO_VARIANTS = {
-    spec.macro_variant: spec
+    spec.macro_function: spec
     for spec in ACTION_SPECS
-    if spec.macro_variant is not None
+    if spec.macro_function is not None
+}
+HELD_KEY_VARIANTS = {
+    spec.held_key_function: spec
+    for spec in ACTION_SPECS
+    if spec.held_key_function is not None
 }
 INTERNAL_ACTION_NAMES = frozenset(
-    set(ACTION_BY_FUNCTION) | set(MACRO_VARIANTS) | {"oneshotk"}
+    set(ACTION_BY_NAME) | set(MACRO_VARIANTS) | set(HELD_KEY_VARIANTS)
 )
 
 
@@ -277,11 +344,11 @@ def parse_action(value: str) -> ParsedAction | None:
     if function in MACRO_VARIANTS:
         return _parse_macro_variant(function, body)
 
-    if function == "oneshotk":
-        return _parse_oneshot_key(body)
+    if function in HELD_KEY_VARIANTS:
+        return _parse_held_key_variant(function, body)
 
-    spec = ACTION_BY_FUNCTION.get(function)
-    if spec is None or spec.function == "noop":
+    spec = ACTION_BY_NAME.get(function)
+    if spec is None or spec.keyd_function == "noop":
         return None
     return _parse_spec(spec, body)
 
@@ -293,20 +360,36 @@ def _parse_macro_variant(function: str, body: str) -> ParsedAction | None:
     expected = len(spec.fields) + 1
     if arguments is None or len(arguments) != expected:
         return None
-    return ParsedAction(spec.action_id, arguments[:-1], macro=arguments[-1])
+    return ParsedAction(
+        spec.keyd_function,
+        arguments[:-1],
+        macro=arguments[-1],
+    )
 
 
-def _parse_oneshot_key(body: str) -> ParsedAction | None:
-    """Normalize ``oneshotk`` to the visual one-shot action."""
+def _parse_held_key_variant(
+    function: str, body: str
+) -> ParsedAction | None:
+    """Normalize a low-level held-key variant to its base action."""
+    spec = HELD_KEY_VARIANTS[function]
     arguments = split_action_arguments(body)
-    if arguments is None or len(arguments) != 2:
+    expected = len(spec.fields) + 1
+    if arguments is None or len(arguments) != expected:
         return None
-    return ParsedAction("oneshot", arguments[:1], held_key=arguments[1])
+    return ParsedAction(
+        spec.keyd_function,
+        arguments[:-1],
+        held_key=arguments[-1],
+    )
 
 
 def _parse_spec(spec: ActionSpec, body: str) -> ParsedAction | None:
     """Parse a regular catalogue entry with its documented arity."""
-    if spec.function in {"macro", "command"}:
+    opaque_kinds = {
+        ActionFieldKind.MACRO_BODY,
+        ActionFieldKind.SHELL_COMMAND,
+    }
+    if len(spec.fields) == 1 and spec.fields[0].input_kind in opaque_kinds:
         arguments = (body,) if body else ()
     else:
         arguments = split_action_arguments(body)
@@ -316,62 +399,77 @@ def _parse_spec(spec: ActionSpec, body: str) -> ParsedAction | None:
         return None
     if any(
         not argument
-        or (field.kind == "timeout" and not argument.isdigit())
+        or (
+            field.input_kind is ActionFieldKind.TIMEOUT_MS
+            and not argument.isdigit()
+        )
         for field, argument in zip(spec.fields, arguments)
     ):
         return None
-    return ParsedAction(spec.action_id, arguments)
+    return ParsedAction(spec.keyd_function, arguments)
 
 
 def format_action(
-    action_id: str,
+    action_name: str,
     arguments: tuple[str, ...],
     *,
     macro: str = "",
     held_key: str = "",
 ) -> str:
     """Generate low-level keyd syntax from a normalized visual action."""
-    spec = ACTION_BY_ID[action_id]
+    spec = ACTION_BY_NAME[action_name]
     cleaned_arguments = tuple(argument.strip() for argument in arguments)
     if len(cleaned_arguments) != len(spec.fields):
-        raise ValueError(f"{action_id} expects {len(spec.fields)} arguments")
+        raise ValueError(
+            f"{action_name} expects {len(spec.fields)} arguments"
+        )
     if any(not argument for argument in cleaned_arguments):
-        raise ValueError(f"{action_id} has an empty required argument")
+        raise ValueError(f"{action_name} has an empty required argument")
     if any(
-        field.kind == "timeout" and not argument.isdigit()
+        field.input_kind is ActionFieldKind.TIMEOUT_MS
+        and not argument.isdigit()
         for field, argument in zip(spec.fields, cleaned_arguments)
     ):
-        raise ValueError(f"{action_id} has a non-numeric timeout")
+        raise ValueError(f"{action_name} has a non-numeric timeout")
 
     macro = macro.strip()
     held_key = held_key.strip()
     if macro and held_key:
         raise ValueError("parallel macro and held key are mutually exclusive")
     if held_key:
-        if spec.action_id != "oneshot":
-            raise ValueError(f"{action_id} does not support a held key")
-        return f"oneshotk({', '.join(cleaned_arguments + (held_key,))})"
-    if macro:
-        if spec.macro_variant is None:
-            raise ValueError(f"{action_id} does not support a parallel macro")
+        if spec.held_key_function is None:
+            raise ValueError(f"{action_name} does not support a held key")
         return (
-            f"{spec.macro_variant}("
+            f"{spec.held_key_function}("
+            f"{', '.join(cleaned_arguments + (held_key,))})"
+        )
+    if macro:
+        if spec.macro_function is None:
+            raise ValueError(
+                f"{action_name} does not support a parallel macro"
+            )
+        return (
+            f"{spec.macro_function}("
             f"{', '.join(cleaned_arguments + (macro,))})"
         )
-    if spec.function == "noop":
+    if spec.keyd_function == "noop":
         return "noop"
-    return f"{spec.function}({', '.join(cleaned_arguments)})"
+    return f"{spec.keyd_function}({', '.join(cleaned_arguments)})"
 
 
 def action_completions() -> tuple[str, ...]:
     """Return all low-level action spellings accepted by keyd."""
-    ordered_names = [spec.function for spec in ACTION_SPECS]
+    ordered_names = [spec.keyd_function for spec in ACTION_SPECS]
     ordered_names.extend(
-        spec.macro_variant
+        spec.macro_function
         for spec in ACTION_SPECS
-        if spec.macro_variant is not None
+        if spec.macro_function is not None
     )
-    ordered_names.append("oneshotk")
+    ordered_names.extend(
+        spec.held_key_function
+        for spec in ACTION_SPECS
+        if spec.held_key_function is not None
+    )
     return tuple(
         name if name == "noop" else f"{name}()" for name in ordered_names
     )
