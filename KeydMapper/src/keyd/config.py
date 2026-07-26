@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import tempfile
 from copy import deepcopy
 
 from constants import CONFIGS_PATH, KEYD_CONFIG_PATH
@@ -313,6 +314,40 @@ class Config:
             if current_section is None:
                 return [f"Content outside a section on line {line_number}"]
         return []
+
+    @staticmethod
+    def check_source_text(text: str) -> tuple[bool | None, str]:
+        """Validate unsaved source with ``keyd check`` using a temporary config."""
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                suffix=".conf",
+            ) as temporary_file:
+                temporary_file.write(text)
+                temporary_file.flush()
+                result = subprocess.run(
+                    ["keyd", "check", temporary_file.name],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+        except FileNotFoundError:
+            return None, "keyd check unavailable"
+        except subprocess.TimeoutExpired:
+            return False, "keyd syntax check timed out"
+
+        output = ((result.stdout or "") + (result.stderr or "")).strip()
+        if result.returncode == 0 and "No errors found." in output:
+            return True, "keyd syntax valid"
+
+        error_lines = [
+            line.strip()
+            for line in output.splitlines()
+            if line.strip() and not line.startswith("Parsing ")
+        ]
+        return False, error_lines[-1] if error_lines else "Invalid keyd syntax"
 
     def save(self) -> None:
         """Save locally, validate, then copy the config to the system path."""

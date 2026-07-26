@@ -292,6 +292,11 @@ class KeydSourceEditor(QPlainTextEdit):
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # pylint: disable=invalid-name
         """Handle indentation and display context-sensitive completions."""
+        if self.isReadOnly():
+            self.completer.popup().hide()
+            super().keyPressEvent(event)
+            return
+
         popup = self.completer.popup()
         if popup.isVisible() and event.key() in (
             Qt.Key.Key_Enter,

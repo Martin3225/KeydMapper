@@ -4,13 +4,15 @@
 
 KeydMapper je desktopová aplikace s grafickým uživatelským rozhraním sloužící pro pohodlné vytváření, úpravu a celkovou správu konfiguračních souborů nástroje keyd. Aplikace umožní uživateli interaktivně naklikat konfiguraci a mapování tlačítek, přičemž výsledek bude zapisovat přímo do konfiguračních souborů ve složce /etc/keyd/.
 
-Při úpravě mapování je v postranním panelu na záložce **Config source**
-dostupný živý textový editor výsledného keyd configu. Změny se obousměrně
-promítají mezi zdrojovým a vizuálním editorem. Editor nabízí zvýraznění syntaxe,
-čísla řádků a našeptávání kláves, akcí, globálních voleb i existujících vrstev
-(našeptávání lze kdykoliv otevřít pomocí `Ctrl+Space`). Ručně vložené komentáře,
-direktivy `include` a ostatní neupravované části souboru zůstávají při generování
-zachované.
+Při úpravě mapování je ve spodní části pravého Inspectoru současně vidět
+**Generated config**. Změna Bindingu tak ihned zvýrazní odpovídající řádek
+výsledného keyd configu. Náhled je standardně pouze pro čtení, lze jej skrýt,
+zvětšit nebo přepnout tlačítkem **Edit config** do ruční editace. Změny se
+obousměrně promítají mezi textovým a vizuálním editorem. Editor nabízí zvýraznění
+syntaxe, čísla řádků a našeptávání kláves, akcí, globálních voleb i existujících
+vrstev (našeptávání lze kdykoliv otevřít pomocí `Ctrl+Space`). Ručně vložené
+komentáře, direktivy `include` a ostatní neupravované části souboru zůstávají při
+generování zachované. Správnost rozpracovaného textu ověřuje přímo `keyd check`.
 
 ## Požadavky a Závislosti
 

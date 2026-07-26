@@ -303,3 +303,41 @@ h = left
     assert "[nav]" not in rendered
     assert "h = left" not in rendered
     assert "# Explain why nav existed" in rendered
+
+
+def test_check_source_text_reports_keyd_success():
+    """Live validation uses keyd's parser rather than only the UI parser."""
+    result = MagicMock(
+        returncode=0,
+        stdout="Parsing /tmp/config.conf\n\nNo errors found.\n",
+        stderr="",
+    )
+    with patch("subprocess.run", return_value=result) as run:
+        valid, message = Config.check_source_text("[ids]\n*\n")
+
+    assert valid is True
+    assert message == "keyd syntax valid"
+    assert run.call_args.args[0][:2] == ["keyd", "check"]
+
+
+def test_check_source_text_returns_keyd_error():
+    """The generated-config panel receives a concise parser error."""
+    result = MagicMock(
+        returncode=1,
+        stdout="Parsing /tmp/config.conf\n",
+        stderr="ERROR: line 4: invalid action\n",
+    )
+    with patch("subprocess.run", return_value=result):
+        valid, message = Config.check_source_text("[ids]\n*\n")
+
+    assert valid is False
+    assert message == "ERROR: line 4: invalid action"
+
+
+def test_check_source_text_handles_missing_keyd():
+    """Preview remains usable on systems where keyd validation is unavailable."""
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        valid, message = Config.check_source_text("[ids]\n*\n")
+
+    assert valid is None
+    assert message == "keyd check unavailable"
