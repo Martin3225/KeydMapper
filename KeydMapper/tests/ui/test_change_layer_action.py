@@ -4,6 +4,7 @@
 from unittest.mock import MagicMock, patch
 
 from ui.actions.change_layer import ChangeLayerAction
+from ui.key_item import KeyItem
 
 
 def _create_mock_editor():
@@ -81,3 +82,48 @@ def test_modifier_toggled_renames_layer():
     assert "nav:A" in mock_editor.config.layers
     assert "nav" not in mock_editor.config.layers
     assert "nav:A" in mock_editor.config.layer_order
+
+
+def test_empty_programmatic_selection_does_not_create_layer_action():
+    """Clearing the combo during a refresh must never write ``layer()``."""
+    mock_editor = _create_mock_editor()
+    key = MagicMock(spec=KeyItem)
+    key.key_value = ""
+    mock_editor.get_selected_key_item.return_value = key
+    action = ChangeLayerAction(mock_editor)
+    mock_editor.set_key_mapping.reset_mock()
+
+    action._layer_selector.setCurrentIndex(-1)
+    action._on_layer_selected("")
+
+    mock_editor.set_key_mapping.assert_not_called()
+
+
+def test_refreshing_layers_does_not_change_literal_mapping():
+    """Rebuilding target-layer options is a read-only UI operation."""
+    mock_editor = _create_mock_editor()
+    key = MagicMock(spec=KeyItem)
+    key.key_value = "right"
+    mock_editor.get_selected_key_item.return_value = key
+    action = ChangeLayerAction(mock_editor)
+    mock_editor.set_key_mapping.reset_mock()
+
+    action.on_layer_changed("main")
+
+    mock_editor.set_key_mapping.assert_not_called()
+
+
+def test_user_layer_selection_still_applies_mapping():
+    """The signal guard must not block an actual user layer choice."""
+    mock_editor = _create_mock_editor()
+    mock_editor.config.layers["nav"] = {}
+    mock_editor.config.layer_order.append("nav")
+    key = MagicMock(spec=KeyItem)
+    key.key_value = ""
+    mock_editor.get_selected_key_item.return_value = key
+    action = ChangeLayerAction(mock_editor)
+    mock_editor.set_key_mapping.reset_mock()
+
+    action._on_layer_selected("nav")
+
+    mock_editor.set_key_mapping.assert_called_once_with(key, "layer(nav)")

@@ -10,11 +10,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 from ui.actions.base import ConfigActionWidget
 from ui.actions.change_layer import ChangeLayerAction
 from ui.actions.set_value import SetValueAction
 from ui.base_editor import BaseEditor
+from ui.config_source_editor import KeydSourceEditor
 from ui.context import EditorContext
 from ui.key_item import KeyItem
 from ui.layout_view import LayoutView
@@ -22,7 +26,7 @@ from ui.layout_view import LayoutView
 
 # @generated [partially] Gemini 3.1: Graphics and styling adjustments
 # Number of attributes is high due to the UI layout
-# pylint: disable=too-many-instance-attributes
+# pylint: disable=too-many-instance-attributes,too-many-statements
 class ConfigEditor(BaseEditor):
     """Editor mode for modifying key mappings within a keyd configuration."""
 
@@ -37,6 +41,9 @@ class ConfigEditor(BaseEditor):
             context=context,
         )
         self.config = config
+        self._has_live_source = isinstance(
+            getattr(self.config, "source_text", None), str
+        )
         self.save_requested.connect(self._save)
         self._current_layer = "main"
 
@@ -66,24 +73,57 @@ class ConfigEditor(BaseEditor):
 
         self.toolbar_layout.addStretch()
 
-        # Side Panel - Action Selector
-        self.panel_layout.addWidget(QLabel("Action:"))
+        # Side panel tabs: visual actions and the lossless live config source.
+        self.side_panel.setMinimumWidth(380)
+        self.panel_tabs = QTabWidget()
+        self.panel_layout.addWidget(self.panel_tabs)
+
+        self.actions_page = QWidget()
+        actions_layout = QVBoxLayout(self.actions_page)
+        actions_layout.setContentsMargins(6, 6, 6, 6)
+        actions_layout.addWidget(QLabel("Action:"))
+
         self._action_selector = QComboBox()
         self._action_selector.addItems(["Set key value", "Change layer"])
         self._action_selector.currentIndexChanged.connect(self._on_action_mode_changed)
-        self.panel_layout.addWidget(self._action_selector)
+        actions_layout.addWidget(self._action_selector)
 
-        # Side Panel - Action Stack
         self._action_stack = QStackedWidget()
         self.set_value_action = SetValueAction(self)
         self.change_layer_action = ChangeLayerAction(self)
 
         self._action_stack.addWidget(self.set_value_action)
         self._action_stack.addWidget(self.change_layer_action)
-        self.panel_layout.addWidget(self._action_stack)
+        actions_layout.addWidget(self._action_stack)
+        actions_layout.addStretch()
+        actions_layout.addWidget(QLabel("Scroll: zoom\nMiddle mouse: pan"))
 
-        self.panel_layout.addStretch()
-        self.panel_layout.addWidget(QLabel("Scroll: zoom\nMiddle mouse: pan"))
+        self.source_page = QWidget()
+        source_layout = QVBoxLayout(self.source_page)
+        source_layout.setContentsMargins(6, 6, 6, 6)
+
+        self.source_status = QLabel()
+        self.source_status.setWordWrap(True)
+        source_layout.addWidget(self.source_status)
+
+        self.source_editor = KeydSourceEditor()
+        self.source_editor.setToolTip(
+            "Live keyd configuration source. Press Ctrl+Space for suggestions."
+        )
+        if self._has_live_source:
+            self.source_editor.setPlainText(self.config.source())
+            self.source_editor.set_completion_layers(self.config.layer_order)
+            self._update_source_status()
+        self.source_editor.textChanged.connect(self._on_source_text_changed)
+        source_layout.addWidget(self.source_editor, stretch=1)
+
+        self.panel_tabs.addTab(self.actions_page, "Actions")
+        self.panel_tabs.addTab(self.source_page, "Config source")
+        self.panel_tabs.currentChanged.connect(self._on_panel_tab_changed)
+
+        # Keep the selection overlay on the action page so source is always usable.
+        self._overlay.setParent(self.actions_page)
+        self.actions_page.installEventFilter(self)
 
     def activate_mode(self) -> None:
         """Sets up the shared view and items for configuration editing."""
@@ -93,6 +133,24 @@ class ConfigEditor(BaseEditor):
             if isinstance(item, KeyItem):
                 item.locked = True
         self._refresh_scene_values()
+        self._sync_source_editor()
+
+    def eventFilter(self, obj, event) -> bool:
+        """Keep the action-only selection overlay fitted to its tab."""
+        if (
+            hasattr(self, "actions_page")
+            and obj == self.actions_page
+            and event.type() == event.Type.Resize
+        ):
+            self._overlay.resize(event.size())
+        return super().eventFilter(obj, event)
+
+    def _on_panel_tab_changed(self, index: int) -> None:
+        """Only show the key-selection overlay on the visual actions tab."""
+        if index == self.panel_tabs.indexOf(self.source_page):
+            self._overlay.hide()
+        else:
+            self._on_selection_changed()
 
     def _on_action_mode_changed(self, index: int) -> None:
         """Handles switching between different action modes."""
@@ -143,15 +201,19 @@ class ConfigEditor(BaseEditor):
         layer_to_delete = self._current_layer
 
         if layer_to_delete in self.config.layers:
-            del self.config.layers[layer_to_delete]
-        if layer_to_delete in self.config.layer_order:
-            self.config.layer_order.remove(layer_to_delete)
+            if self._has_live_source:
+                self.config.delete_layer(layer_to_delete)
+            else:
+                del self.config.layers[layer_to_delete]
+                if layer_to_delete in self.config.layer_order:
+                    self.config.layer_order.remove(layer_to_delete)
 
         self.layer_combo.blockSignals(True)
         self.layer_combo.removeItem(self.layer_combo.findText(layer_to_delete))
         self.layer_combo.blockSignals(False)
 
         self.layer_combo.setCurrentText("main")
+        self.on_config_structure_changed()
 
     def _refresh_scene_values(self) -> None:
         """Refreshes the displayed key values based on the current layer."""
@@ -166,10 +228,80 @@ class ConfigEditor(BaseEditor):
         key.key_value = val
         key.update()
 
-        if val:
-            self.config.layers[self._current_layer][key.key_name] = val
+        if self._has_live_source:
+            self.config.set_mapping(
+                self._current_layer,
+                key.key_name,
+                val,
+            )
         else:
-            self.config.layers[self._current_layer].pop(key.key_name, None)
+            if val:
+                self.config.layers[self._current_layer][key.key_name] = val
+            else:
+                self.config.layers[self._current_layer].pop(key.key_name, None)
+        self._sync_source_editor()
+
+    def on_config_structure_changed(self) -> None:
+        """Refresh live source and completions after adding or renaming layers."""
+        self._sync_source_editor()
+        self.source_editor.set_completion_layers(self.config.layer_order)
+
+    def _sync_source_editor(self) -> None:
+        """Show visual-model changes in source without moving the user's cursor."""
+        if not self._has_live_source:
+            return
+
+        text = self.config.source()
+        if self.source_editor.toPlainText() == text:
+            self._update_source_status()
+            return
+
+        cursor = self.source_editor.textCursor()
+        cursor_position = cursor.position()
+        scroll_position = self.source_editor.verticalScrollBar().value()
+        self.source_editor.blockSignals(True)
+        self.source_editor.setPlainText(text)
+        self.source_editor.blockSignals(False)
+        cursor = self.source_editor.textCursor()
+        cursor.setPosition(min(cursor_position, len(text)))
+        self.source_editor.setTextCursor(cursor)
+        self.source_editor.verticalScrollBar().setValue(scroll_position)
+        self._update_source_status()
+
+    def _on_source_text_changed(self) -> None:
+        """Apply source edits to the visual model immediately."""
+        if not self._has_live_source:
+            return
+
+        current_layer = self._current_layer
+        self.config.update_from_text(self.source_editor.toPlainText())
+        if current_layer not in self.config.layers:
+            current_layer = "main"
+
+        self.layer_combo.blockSignals(True)
+        self.layer_combo.clear()
+        self.layer_combo.addItems(self.config.layer_order)
+        self.layer_combo.setCurrentText(current_layer)
+        self.layer_combo.blockSignals(False)
+        self._current_layer = current_layer
+
+        self.source_editor.set_completion_layers(self.config.layer_order)
+        self.set_value_action.on_layer_changed(current_layer)
+        self.change_layer_action.on_layer_changed(current_layer)
+        self.delete_layer_btn.setEnabled(current_layer != "main")
+        self._refresh_scene_values()
+        self._on_selection_changed()
+        self._update_source_status()
+
+    def _update_source_status(self) -> None:
+        """Display lightweight live feedback; keyd performs final validation on save."""
+        diagnostics = Config.diagnostics(self.source_editor.toPlainText())
+        if diagnostics:
+            self.source_status.setText(f"⚠ {diagnostics[0]}")
+            self.source_status.setStyleSheet("color: #e5a50a;")
+        else:
+            self.source_status.setText("● Live — visual editor synchronized")
+            self.source_status.setStyleSheet("color: #57c75f;")
 
     @property
     def _active_action(self) -> ConfigActionWidget:
@@ -179,6 +311,11 @@ class ConfigEditor(BaseEditor):
     def _on_selection_changed(self) -> None:
         """Handles selection changes by updating the active action widget."""
         super()._on_selection_changed()
+        if (
+            hasattr(self, "panel_tabs")
+            and self.panel_tabs.currentWidget() == self.source_page
+        ):
+            self._overlay.hide()
         key = self.get_selected_key_item()
         self._active_action.on_selection_changed(key)
 

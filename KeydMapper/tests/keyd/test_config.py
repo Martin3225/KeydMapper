@@ -179,3 +179,127 @@ def test_config_save_pkexec_missing():
 
         assert "pkexec" in str(excinfo.value)
         assert "command was not found" in str(excinfo.value)
+
+
+def test_visual_mapping_change_preserves_comments_and_directives():
+    """Patching a visual binding must leave authored source context untouched."""
+    sample_content = """# Keyboard used at work
+[ids]
+1234:5678
+# Keep this device note
+
+[main]
+# Home-row navigation
+include common
+a = b
+# This stays below the binding
+
+[global]
+# Deliberately tuned
+macro_timeout = 700
+"""
+
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open(read_data=sample_content)),
+        patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
+    ):
+        config = Config("comments.conf")
+
+    config.set_mapping("main", "a", "left")
+    config.set_mapping("main", "j", "down")
+    rendered = config.source()
+
+    assert "# Keyboard used at work" in rendered
+    assert "# Keep this device note" in rendered
+    assert "# Home-row navigation" in rendered
+    assert "# This stays below the binding" in rendered
+    assert "# Deliberately tuned" in rendered
+    assert "include common" in rendered
+    assert "a = left" in rendered
+    assert "j = down" in rendered
+    assert "macro_timeout = 700" in rendered
+
+
+def test_duplicate_binding_updates_only_effective_occurrence():
+    """keyd uses the latest duplicate binding, so that is the one to patch."""
+    sample_content = """[ids]
+*
+
+[main]
+a = first
+# Override kept for a reason
+a    =    second
+"""
+
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open(read_data=sample_content)),
+        patch("keyd.config.get_device_id_from_config", return_value="*"),
+    ):
+        config = Config("duplicates.conf")
+
+    config.set_mapping("main", "a", "third")
+    rendered = config.source()
+
+    assert "a = first" in rendered
+    assert "a    =    third" in rendered
+    assert "# Override kept for a reason" in rendered
+
+
+def test_source_edit_rebuilds_visual_model_and_keeps_aliases_special():
+    """Live source edits immediately become the semantic visual model."""
+    with (
+        patch("os.path.exists", return_value=False),
+        patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
+    ):
+        config = Config("live.conf")
+
+    config.update_from_text(
+        """[ids]
+1234:5678
+
+[aliases]
+rightmeta = alt
+
+[main]
+capslock = layer(nav)
+
+[nav:C]
+h = left
+"""
+    )
+
+    assert config.layers["main"]["capslock"] == "layer(nav)"
+    assert config.layers["nav:C"]["h"] == "left"
+    assert "aliases" not in config.layers
+    assert config.special_sections["aliases"] == ["rightmeta = alt\n", "\n"]
+    assert config.layer_order == ["main", "nav:C"]
+
+
+def test_deleting_layer_retains_its_comments():
+    """Intentional layer deletion still honours the no-comment-loss guarantee."""
+    sample_content = """[ids]
+*
+
+[main]
+a = b
+
+[nav]
+# Explain why nav existed
+h = left
+"""
+
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open(read_data=sample_content)),
+        patch("keyd.config.get_device_id_from_config", return_value="*"),
+    ):
+        config = Config("delete.conf")
+
+    config.delete_layer("nav")
+    rendered = config.source()
+
+    assert "[nav]" not in rendered
+    assert "h = left" not in rendered
+    assert "# Explain why nav existed" in rendered

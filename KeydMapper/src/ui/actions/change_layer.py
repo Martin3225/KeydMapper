@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from keyd.config import Config
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -72,31 +73,39 @@ For example, if you want 'tab' to act as '{mod}-tab', you MUST explicitly map it
     def _update_selection(self) -> None:
         """Synchronizes the layer selector with the currently selected key's value."""
         key = self.editor.get_selected_key_item()
+        signals_were_blocked = self._layer_selector.blockSignals(True)
         if not key:
             self._layer_selector.setEnabled(False)
             self._layer_selector.setCurrentIndex(-1)
+            self._layer_selector.blockSignals(signals_were_blocked)
             return
 
         self._layer_selector.setEnabled(True)
 
-        # Check if the value matches a layer-related command
-        val = key.key_value
-        found = False
-        for i in range(self._layer_selector.count()):
-            layer_name = self._layer_selector.itemText(i)
-            base_layer = layer_name.split(":")[0]
-            if val == f"layer({base_layer})":
-                self._layer_selector.setCurrentIndex(i)
-                self._update_checkboxes_from_layer(layer_name)
-                found = True
-                break
+        try:
+            # Reflect model state without emitting a user-intent signal.
+            val = key.key_value
+            found = False
+            for i in range(self._layer_selector.count()):
+                layer_name = self._layer_selector.itemText(i)
+                base_layer = layer_name.split(":")[0]
+                if val == f"layer({base_layer})":
+                    self._layer_selector.setCurrentIndex(i)
+                    self._update_checkboxes_from_layer(layer_name)
+                    found = True
+                    break
 
-        if not found:
-            self._layer_selector.setCurrentIndex(-1)
-            self._update_checkboxes_from_layer("")
+            if not found:
+                self._layer_selector.setCurrentIndex(-1)
+                self._update_checkboxes_from_layer("")
+        finally:
+            self._layer_selector.blockSignals(signals_were_blocked)
 
     def _on_layer_selected(self, text: str) -> None:
         """Handles user selection of a layer from the dropdown."""
+        if not text:
+            return
+
         if text == "+ New layer":
             self._create_new_layer()
             return
@@ -129,11 +138,16 @@ For example, if you want 'tab' to act as '{mod}-tab', you MUST explicitly map it
                 name = base
 
         if name not in self.editor.config.layers:
-            self.editor.config.layers[name] = {}
-            self.editor.config.layer_order.append(name)
+            if isinstance(self.editor.config, Config):
+                self.editor.config.add_layer(name)
+            else:
+                self.editor.config.layers[name] = {}
+                self.editor.config.layer_order.append(name)
             self.editor.layer_combo.addItem(name)
             self.on_layer_changed("")
             self._layer_selector.setCurrentText(name)
+            if hasattr(self.editor, "on_config_structure_changed"):
+                self.editor.on_config_structure_changed()
         else:
             self._layer_selector.setCurrentText(name)
 
@@ -192,13 +206,18 @@ For example, if you want 'tab' to act as '{mod}-tab', you MUST explicitly map it
     def _rename_layer(self, old_name: str, new_name: str) -> None:
         """Renames a layer in the config and updates the UI comboboxes."""
         config = self.editor.config
-        if old_name in config.layers:
-            config.layers[new_name] = config.layers.pop(old_name)
+        if isinstance(config, Config):
+            config.rename_layer(old_name, new_name)
+        else:
+            if old_name in config.layers:
+                config.layers[new_name] = config.layers.pop(old_name)
 
-        if old_name in config.layer_order:
-            idx = config.layer_order.index(old_name)
-            config.layer_order[idx] = new_name
+            if old_name in config.layer_order:
+                idx = config.layer_order.index(old_name)
+                config.layer_order[idx] = new_name
 
         self.on_layer_changed("")
 
         self.editor.update_layer_name_in_combo(old_name, new_name)
+        if hasattr(self.editor, "on_config_structure_changed"):
+            self.editor.on_config_structure_changed()

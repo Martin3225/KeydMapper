@@ -1,10 +1,22 @@
-"""Module for handling keyd configuration files."""
+"""Module for lossless handling of keyd configuration files."""
+
+from __future__ import annotations
 
 import os
+import re
 import subprocess
+from copy import deepcopy
 
 from constants import CONFIGS_PATH, KEYD_CONFIG_PATH
 from keyd.layout import get_device_id_from_config
+
+
+_SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
+_BINDING_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<key>[^#=\r\n][^=\r\n]*?)"
+    r"(?P<separator>\s*=\s*)(?P<value>[^\r\n]*)(?P<newline>\r?\n)?$"
+)
+_SPECIAL_SECTIONS = frozenset({"ids", "global", "aliases"})
 
 
 class ConfigSaveError(Exception):
@@ -12,7 +24,7 @@ class ConfigSaveError(Exception):
 
 
 class Config:
-    """Represents a keyd configuration file, parsing its layers and properties."""
+    """Represents a keyd config while retaining its original source text."""
 
     def __init__(self, name: str, device_id: str | None = None) -> None:
         self.name = name
@@ -24,65 +36,286 @@ class Config:
         self.layers: dict[str, dict[str, str]] = {}
         self.special_sections: dict[str, list[str]] = {}
         self.layer_order: list[str] = []
+        self.source_text = ""
 
         self.load()
 
     def load(self) -> None:
-        """Loads and parses the keyd configuration file."""
+        """Load and parse the keyd configuration file."""
         if not os.path.exists(self.keyd_path):
+            self._reset_model()
             self._ensure_main_layer()
             return
 
-        current_layer = None
         with open(self.keyd_path, "r", encoding="utf-8") as file:
-            for line in file:
-                current_layer = self._parse_line(line, current_layer)
+            self.update_from_text(file.read())
 
+    def update_from_text(self, text: str) -> None:
+        """Replace the live source and rebuild the visual-editor model from it."""
+        layers, special_sections, layer_order = self._parse_text(text)
+        self.source_text = text
+        self.layers = layers
+        self.special_sections = special_sections
+        self.layer_order = layer_order
         self._ensure_main_layer()
 
-    def _parse_line(self, line: str, current_layer: str | None) -> str | None:
-        """Parses a single line from the config file and updates state."""
-        stripped = line.strip()
+    @staticmethod
+    def _parse_text(
+        text: str,
+    ) -> tuple[
+        dict[str, dict[str, str]],
+        dict[str, list[str]],
+        list[str],
+    ]:
+        """Parse source without normalising or modifying it."""
+        layers: dict[str, dict[str, str]] = {}
+        special_sections: dict[str, list[str]] = {}
+        layer_order: list[str] = []
+        current_section: str | None = None
 
-        if stripped.startswith("[") and stripped.endswith("]"):
-            return self._handle_section_header(stripped)
+        for line in text.splitlines(keepends=True):
+            stripped = line.strip()
+            section_match = _SECTION_RE.match(stripped)
+            if section_match:
+                current_section = section_match.group(1)
+                if current_section in _SPECIAL_SECTIONS:
+                    special_sections.setdefault(current_section, [])
+                else:
+                    if current_section not in layers:
+                        layers[current_section] = {}
+                        layer_order.append(current_section)
+                continue
 
-        if current_layer in ["ids", "global"]:
-            self.special_sections[current_layer].append(line)
-        elif current_layer is not None:
-            self._handle_key_value(current_layer, stripped)
+            if current_section in _SPECIAL_SECTIONS:
+                special_sections[current_section].append(line)
+            elif current_section is not None:
+                binding_match = _BINDING_RE.match(line)
+                if binding_match:
+                    key = binding_match.group("key").strip()
+                    layers[current_section][key] = binding_match.group("value").strip()
 
-        return current_layer
+        return layers, special_sections, layer_order
 
-    def _handle_section_header(self, stripped_line: str) -> str:
-        """Handles a section header (e.g., [ids], [main]) and returns the section name."""
-        section_name = stripped_line[1:-1]
-
-        if section_name in ["ids", "global"]:
-            if section_name not in self.special_sections:
-                self.special_sections[section_name] = []
-        else:
-            if section_name not in self.layers:
-                self.layers[section_name] = {}
-                self.layer_order.append(section_name)
-
-        return section_name
-
-    def _handle_key_value(self, current_layer: str, stripped_line: str) -> None:
-        """Handles a key-value assignment in a standard layer."""
-        if "=" in stripped_line and not stripped_line.startswith("#"):
-            k, v = stripped_line.split("=", 1)
-            self.layers[current_layer][k.strip()] = v.strip()
+    def _reset_model(self) -> None:
+        self.layers = {}
+        self.special_sections = {}
+        self.layer_order = []
 
     def _ensure_main_layer(self) -> None:
-        """Ensures that the 'main' layer exists in the configuration."""
+        """Ensure that the visual editor always has a main layer."""
         if "main" not in self.layers:
             self.layers["main"] = {}
             if "main" not in self.layer_order:
                 self.layer_order.insert(0, "main")
 
+    def source(self) -> str:
+        """Return source reflecting the current visual model."""
+        self.source_text = self._render_model_into_source()
+        return self.source_text
+
+    def set_mapping(self, layer: str, key: str, value: str) -> None:
+        """Update one binding and patch only that binding in the source."""
+        self.layers.setdefault(layer, {})
+        if layer not in self.layer_order:
+            self.layer_order.append(layer)
+
+        if value:
+            self.layers[layer][key] = value
+        else:
+            self.layers[layer].pop(key, None)
+
+        self.source_text = self._set_mapping_in_text(
+            self._initial_source(), layer, key, value or None
+        )
+
+    def add_layer(self, name: str) -> None:
+        """Add a layer to the model and source."""
+        if name in self.layers:
+            return
+        self.layers[name] = {}
+        self.layer_order.append(name)
+        self.source_text = self._append_layer(self._initial_source(), name, {})
+
+    def rename_layer(self, old_name: str, new_name: str) -> None:
+        """Rename a layer without disturbing its comments or directives."""
+        if old_name == new_name or old_name not in self.layers:
+            return
+
+        self.layers[new_name] = self.layers.pop(old_name)
+        if old_name in self.layer_order:
+            self.layer_order[self.layer_order.index(old_name)] = new_name
+
+        lines = self._initial_source().splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            match = _SECTION_RE.match(line.strip())
+            if match and match.group(1) == old_name:
+                newline = "\n" if line.endswith("\n") else ""
+                if line.endswith("\r\n"):
+                    newline = "\r\n"
+                indent = line[: len(line) - len(line.lstrip())]
+                lines[index] = f"{indent}[{new_name}]{newline}"
+        self.source_text = "".join(lines)
+
+    def delete_layer(self, name: str) -> None:
+        """Delete a layer while retaining every comment in the file."""
+        if name == "main":
+            return
+        self.layers.pop(name, None)
+        if name in self.layer_order:
+            self.layer_order.remove(name)
+        self.source_text = self._delete_layer_from_text(self._initial_source(), name)
+
+    def _initial_source(self) -> str:
+        if self.source_text:
+            return self.source_text
+        device_line = f"{self.device_id}\n" if self.device_id else ""
+        return f"[ids]\n{device_line}\n"
+
+    def _render_model_into_source(self) -> str:
+        """Patch model differences into source instead of regenerating the file."""
+        text = self._initial_source()
+        source_layers, _, source_order = self._parse_text(text)
+        desired_layers = deepcopy(self.layers)
+
+        for layer in source_order:
+            if layer not in desired_layers:
+                text = self._delete_layer_from_text(text, layer)
+
+        for layer in self.layer_order:
+            if layer not in source_layers:
+                text = self._append_layer(text, layer, desired_layers.get(layer, {}))
+                continue
+
+            source_bindings = source_layers[layer]
+            desired_bindings = desired_layers.get(layer, {})
+            for key in source_bindings.keys() - desired_bindings.keys():
+                text = self._set_mapping_in_text(text, layer, key, None)
+            for key, value in desired_bindings.items():
+                if source_bindings.get(key) != value:
+                    text = self._set_mapping_in_text(text, layer, key, value)
+
+        return text
+
+    @staticmethod
+    def _section_spans(lines: list[str], name: str) -> list[tuple[int, int]]:
+        headers: list[tuple[int, str]] = []
+        for index, line in enumerate(lines):
+            match = _SECTION_RE.match(line.strip())
+            if match:
+                headers.append((index, match.group(1)))
+
+        spans: list[tuple[int, int]] = []
+        for header_index, (start, section_name) in enumerate(headers):
+            end = (
+                headers[header_index + 1][0]
+                if header_index + 1 < len(headers)
+                else len(lines)
+            )
+            if section_name == name:
+                spans.append((start, end))
+        return spans
+
+    @classmethod
+    def _set_mapping_in_text(
+        cls, text: str, layer: str, key: str, value: str | None
+    ) -> str:
+        lines = text.splitlines(keepends=True)
+        spans = cls._section_spans(lines, layer)
+        matches: list[int] = []
+
+        for start, end in spans:
+            for index in range(start + 1, end):
+                binding_match = _BINDING_RE.match(lines[index])
+                if binding_match and binding_match.group("key").strip() == key:
+                    matches.append(index)
+
+        if value is None:
+            for index in reversed(matches):
+                del lines[index]
+            return "".join(lines)
+
+        if matches:
+            index = matches[-1]
+            binding_match = _BINDING_RE.match(lines[index])
+            assert binding_match is not None
+            newline = binding_match.group("newline") or ""
+            lines[index] = (
+                f"{binding_match.group('indent')}{binding_match.group('key')}"
+                f"{binding_match.group('separator')}{value}{newline}"
+            )
+            return "".join(lines)
+
+        if not spans:
+            return cls._append_layer(text, layer, {key: value})
+
+        _, insertion_index = spans[-1]
+        if insertion_index and not lines[insertion_index - 1].endswith(("\n", "\r")):
+            lines[insertion_index - 1] += "\n"
+        lines.insert(insertion_index, f"{key} = {value}\n")
+        return "".join(lines)
+
+    @staticmethod
+    def _append_layer(
+        text: str, layer: str, bindings: dict[str, str]
+    ) -> str:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        if text and not text.endswith("\n\n"):
+            text += "\n"
+        text += f"[{layer}]\n"
+        for key, value in bindings.items():
+            text += f"{key} = {value}\n"
+        return text
+
+    @classmethod
+    def _delete_layer_from_text(cls, text: str, layer: str) -> str:
+        """Remove layer semantics but deliberately retain its comment lines."""
+        lines = text.splitlines(keepends=True)
+        spans = cls._section_spans(lines, layer)
+        remove_indices: set[int] = set()
+
+        for start, end in spans:
+            remove_indices.add(start)
+            for index in range(start + 1, end):
+                stripped = lines[index].lstrip()
+                if stripped.startswith("#") or not stripped.strip():
+                    continue
+                remove_indices.add(index)
+
+        return "".join(
+            line for index, line in enumerate(lines) if index not in remove_indices
+        )
+
+    @staticmethod
+    def diagnostics(text: str) -> list[str]:
+        """Return lightweight diagnostics suitable for live editing."""
+        significant_lines = [
+            line.strip()
+            for line in text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        if not significant_lines:
+            return ["Configuration is empty"]
+        if significant_lines[0] != "[ids]":
+            return ["The first section must be [ids]"]
+
+        current_section: str | None = None
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            section_match = _SECTION_RE.match(stripped)
+            if section_match:
+                current_section = section_match.group(1)
+                continue
+            if stripped.startswith("[") and not section_match:
+                return [f"Malformed section header on line {line_number}"]
+            if current_section is None:
+                return [f"Content outside a section on line {line_number}"]
+        return []
+
     def save(self) -> None:
-        """Saves the configuration locally, validates it, and copies it to the system path."""
+        """Save locally, validate, then copy the config to the system path."""
         os.makedirs(CONFIGS_PATH, exist_ok=True)
         local_path = os.path.join(CONFIGS_PATH, self.name)
 
@@ -90,7 +323,7 @@ class Config:
         self._copy_to_system(local_path)
 
     def check(self) -> str | None:
-        """Runs keyd check on the local config file and returns its output if there are errors."""
+        """Run ``keyd check`` and return its output when validation fails."""
         local_path = os.path.join(CONFIGS_PATH, self.name)
         if not os.path.exists(local_path):
             return None
@@ -109,49 +342,21 @@ class Config:
         return None
 
     def _write_config_to_local(self, local_path: str) -> None:
-        """Writes the current configuration state to a local file and validates it."""
+        """Write the lossless live source and validate it."""
         try:
             with open(local_path, "w", encoding="utf-8") as file:
-                self._write_ids_section(file)
-                self._write_global_section(file)
-                self._write_layers(file)
-        except Exception as e:
-            raise ConfigSaveError(f"Error writing locally to {local_path}: {e}") from e
+                file.write(self.source())
+        except Exception as exc:
+            raise ConfigSaveError(
+                f"Error writing locally to {local_path}: {exc}"
+            ) from exc
 
         warning = self.check()
         if warning:
             raise ConfigSaveError(f"Cannot save invalid configuration:\n\n{warning}")
 
-    def _write_ids_section(self, file_obj) -> None:
-        """Writes the [ids] section to the configuration file."""
-        if "ids" in self.special_sections:
-            file_obj.write("[ids]\n")
-            for line in self.special_sections["ids"]:
-                file_obj.write(line)
-        else:
-            file_obj.write("[ids]\n")
-            if self.device_id:
-                file_obj.write(f"{self.device_id}\n")
-        file_obj.write("\n")
-
-    def _write_global_section(self, file_obj) -> None:
-        """Writes the [global] section to the configuration file."""
-        if "global" in self.special_sections:
-            file_obj.write("[global]\n")
-            for line in self.special_sections["global"]:
-                file_obj.write(line)
-            file_obj.write("\n")
-
-    def _write_layers(self, file_obj) -> None:
-        """Writes the custom layers to the configuration file."""
-        for layer in self.layer_order:
-            file_obj.write(f"[{layer}]\n")
-            for k, v in self.layers[layer].items():
-                file_obj.write(f"{k} = {v}\n")
-            file_obj.write("\n")
-
     def _copy_to_system(self, local_path: str, old_name: str | None = None) -> None:
-        """Copies the local configuration to the system path, optionally cleaning up old files, and restarts keyd."""
+        """Copy the local config to keyd's path and restart the daemon."""
         cmd = ["pkexec", "sh", "-c", f"cp '{local_path}' '{self.keyd_path}'"]
 
         if old_name:
@@ -185,7 +390,7 @@ class Config:
             ) from exc
 
     def set_config_enable(self, enable: bool) -> None:
-        """Enables or disables the configuration by saving current state and renaming."""
+        """Enable or disable the configuration by saving it under a new suffix."""
         old_name = self.name
         new_name = ".".join(self.name.split(".")[:-1]) + (
             ".conf" if enable else ".disabled"
@@ -204,6 +409,6 @@ class Config:
             raise
 
     def _update_name(self, name: str) -> None:
-        """Updates internal references to the configuration name and path."""
+        """Update internal references to the configuration name and path."""
         self.name = name
         self.keyd_path = os.path.join(KEYD_CONFIG_PATH, name)
