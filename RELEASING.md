@@ -80,6 +80,8 @@ Copy the prepared files from the KeydMapper checkout:
 ```bash
 cp KeydMapper/packaging/aur/PKGBUILD keyd-mapper-aur/
 cp KeydMapper/packaging/aur/.SRCINFO keyd-mapper-aur/
+cp KeydMapper/packaging/aur/LICENSE keyd-mapper-aur/
+cp KeydMapper/packaging/aur/keyd-mapper.install keyd-mapper-aur/
 cd keyd-mapper-aur
 ```
 
@@ -92,13 +94,14 @@ makepkg --cleanbuild --syncdeps --install
 If the build succeeds, publish the AUR metadata:
 
 ```bash
-git add PKGBUILD .SRCINFO
+git add PKGBUILD .SRCINFO LICENSE keyd-mapper.install
 git commit -m "Initial import: 0.1.0-1"
 git push
 ```
 
-The AUR repository contains only `PKGBUILD` and `.SRCINFO`; application
-development continues in the GitHub repository.
+The AUR repository contains only the packaging metadata, its 0BSD license, and
+the install notice. Application development continues in the GitHub
+repository.
 
 ## Updating an existing AUR package
 
@@ -108,3 +111,5 @@ development continues in the GitHub repository.
   `.SRCINFO`.
 - Always create and push the corresponding GitHub tag before publishing the AUR
   update, because the AUR build reads that tag.
+- After the tag is public, regenerate the source checksum with `makepkg -g` or
+  `updpkgsums`, update `b2sums`, and regenerate `.SRCINFO`.
