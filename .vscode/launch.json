@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "KeydMapper",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/KeydMapper/src/main.py",
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "pythonPath": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}",
+      },
+    },
+  ],
+}

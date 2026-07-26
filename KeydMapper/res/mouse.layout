@@ -1,0 +1,77 @@
+{
+  "device_id": "1532:0099",
+  "buttons": [
+    {
+      "name": "mouse1",
+      "default": "",
+      "x": 2440.0,
+      "y": 1440.0,
+      "width": 60.0,
+      "height": 60.0
+    },
+    {
+      "name": "mouse2",
+      "default": "",
+      "x": 2440.0,
+      "y": 1350.0,
+      "width": 60.0,
+      "height": 60.0
+    },
+    {
+      "name": "middlemouse",
+      "default": "",
+      "x": 2640.0,
+      "y": 1160.0,
+      "width": 40.0,
+      "height": 60.0
+    },
+    {
+      "name": "right",
+      "default": "",
+      "x": 2690.0,
+      "y": 1170.0,
+      "width": 30.0,
+      "height": 40.0
+    },
+    {
+      "name": "left",
+      "default": "",
+      "x": 2600.0,
+      "y": 1170.0,
+      "width": 30.0,
+      "height": 40.0
+    },
+    {
+      "name": "scrolldown",
+      "default": "",
+      "x": 2640.0,
+      "y": 1230.0,
+      "width": 40.0,
+      "height": 40.0
+    },
+    {
+      "name": "scrollup",
+      "default": "",
+      "x": 2640.0,
+      "y": 1110.0,
+      "width": 40.0,
+      "height": 40.0
+    },
+    {
+      "name": "rightmouse",
+      "default": "",
+      "x": 2730.0,
+      "y": 1130.0,
+      "width": 90.0,
+      "height": 170.0
+    },
+    {
+      "name": "leftmouse",
+      "default": "",
+      "x": 2500.0,
+      "y": 1130.0,
+      "width": 90.0,
+      "height": 170.0
+    }
+  ]
+}
