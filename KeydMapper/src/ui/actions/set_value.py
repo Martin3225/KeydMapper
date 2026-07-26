@@ -162,7 +162,12 @@ class SetValueAction(ConfigActionWidget):
 
         layout.addLayout(mod_layout)
 
-        self._recorder = KeyRecorder(parent=self)
+        # Filter the privileged physical monitor to the device selected by the
+        # loaded config. This keeps recording useful while keyd owns the device.
+        self._recorder = KeyRecorder(
+            getattr(editor.config, "device_id", None),
+            parent=self,
+        )
         self._recorder.key_recorded.connect(self.on_key_recorded)
 
         self._record_btn = RecordButton(self._recorder)

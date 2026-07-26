@@ -1,11 +1,12 @@
 """Binding inspector and layer navigation for :mod:`ui.config_editor`."""
 
+import re
 from typing import cast
 
 from keyd.actions import ACTION_SPECS, ActionCategory
 from keyd.config import ConfigSaveError
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QStandardItemModel
+from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtGui import QKeyEvent, QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QListWidget,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -29,6 +31,36 @@ from ui.key_item import KeyItem
 # pylint: disable=no-member,too-many-instance-attributes
 
 LITERAL_BINDING = "literal"
+_LAYER_NAME_RE = re.compile(
+    r"^[A-Za-z0-9_-]+(?::(?:[CAMSG]|layout))?$",
+    re.IGNORECASE,
+)
+
+
+def _normalise_layer_name(name: str) -> str:
+    """Return keyd's canonical spelling for an optional layer suffix."""
+    name = name.strip()
+    if ":" not in name:
+        return name
+    base, suffix = name.split(":", 1)
+    base = base.strip()
+    suffix = suffix.strip()
+    suffix = suffix.upper() if len(suffix) == 1 else suffix.lower()
+    return f"{base}:{suffix}"
+
+
+class LayerListWidget(QListWidget):  # pylint: disable=too-few-public-methods
+    """Layer rail that exposes the conventional F2 rename gesture."""
+
+    rename_requested = Signal()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Turn F2 into a rename request and delegate every other key."""
+        if event.key() == Qt.Key.Key_F2:
+            self.rename_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class ConfigBindingsMixin:
@@ -87,9 +119,17 @@ class ConfigBindingsMixin:
         layout = QVBoxLayout(self.layer_panel)
         layout.addWidget(QLabel("LAYERS"))
 
-        self.layer_list = QListWidget()
+        self.layer_list = LayerListWidget()
         self.layer_list.addItems(self.config.layer_order)
         self.layer_list.currentTextChanged.connect(self._on_layer_list_changed)
+        self.layer_list.setToolTip("Press F2 or right-click to rename a layer")
+        self.layer_list.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.layer_list.customContextMenuRequested.connect(
+            self._show_layer_context_menu
+        )
+        self.layer_list.rename_requested.connect(self._rename_current_layer)
         layout.addWidget(self.layer_list, stretch=1)
 
         layer_buttons = QHBoxLayout()
@@ -238,6 +278,68 @@ class ConfigBindingsMixin:
         self._current_layer = name
         self.on_config_structure_changed()
         self._on_layer_changed(name)
+
+    def _show_layer_context_menu(self, position: QPoint) -> None:
+        """Offer contextual layer commands without adding permanent chrome."""
+        item = self.layer_list.itemAt(position)
+        if item is None:
+            return
+        self.layer_list.setCurrentItem(item)
+
+        menu = QMenu(self.layer_list)
+        rename_action = menu.addAction("Rename layer…")
+        rename_action.setEnabled(item.text() != "main")
+        rename_action.triggered.connect(self._rename_current_layer)
+        menu.exec(self.layer_list.viewport().mapToGlobal(position))
+
+    def _rename_current_layer(self) -> None:
+        """Rename the selected layer and every action that refers to it."""
+        item = self.layer_list.currentItem()
+        if item is None or item.text() == "main":
+            return
+
+        old_name = item.text()
+        new_name, accepted = QInputDialog.getText(
+            self,
+            "Rename Layer",
+            "Layer name:",
+            text=old_name,
+        )
+        if not accepted:
+            return
+        new_name = _normalise_layer_name(new_name)
+        if new_name == old_name:
+            return
+        if not _LAYER_NAME_RE.fullmatch(new_name):
+            QMessageBox.warning(
+                self,
+                "Invalid layer name",
+                "Use letters, numbers, '_' or '-'. An optional suffix may be "
+                ":C, :A, :M, :S, :G or :layout.",
+            )
+            return
+        if new_name in self.config.layers:
+            QMessageBox.warning(
+                self,
+                "Layer already exists",
+                f"A layer named '{new_name}' already exists.",
+            )
+            return
+
+        try:
+            if self._has_live_source:
+                self.config.rename_layer(old_name, new_name)
+            else:
+                self.config.layers[new_name] = self.config.layers.pop(old_name)
+                layer_index = self.config.layer_order.index(old_name)
+                self.config.layer_order[layer_index] = new_name
+        except ValueError as error:
+            QMessageBox.warning(self, "Cannot rename layer", str(error))
+            return
+
+        self._current_layer = new_name
+        self.on_config_structure_changed()
+        self._on_layer_changed(new_name)
 
     def _on_action_selected(self, index: int) -> None:
         """Open the literal editor or selected structured action form."""

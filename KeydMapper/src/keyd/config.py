@@ -18,6 +18,22 @@ _BINDING_RE = re.compile(
     r"(?P<separator>\s*=\s*)(?P<value>[^\r\n]*)(?P<newline>\r?\n)?$"
 )
 _SPECIAL_SECTIONS = frozenset({"ids", "global", "aliases"})
+_LAYER_ACTIONS = (
+    "layer",
+    "oneshot",
+    "swap",
+    "toggle",
+    "setlayout",
+    "layerm",
+    "oneshotm",
+    "oneshotk",
+    "swapm",
+    "togglem",
+    "overload",
+    "overloadt",
+    "overloadt2",
+    "lettermod",
+)
 
 
 class ConfigSaveError(Exception):
@@ -138,15 +154,18 @@ class Config:
         self.source_text = self._append_layer(self._initial_source(), name, {})
 
     def rename_layer(self, old_name: str, new_name: str) -> None:
-        """Rename a layer without disturbing its comments or directives."""
+        """Rename a layer and its action references without losing source context."""
         if old_name == new_name or old_name not in self.layers:
             return
+        if old_name == "main":
+            raise ValueError("The main layer cannot be renamed")
+        if not new_name:
+            raise ValueError("Layer name cannot be empty")
+        if new_name in self.layers:
+            raise ValueError(f"Layer '{new_name}' already exists")
 
-        self.layers[new_name] = self.layers.pop(old_name)
-        if old_name in self.layer_order:
-            self.layer_order[self.layer_order.index(old_name)] = new_name
-
-        lines = self._initial_source().splitlines(keepends=True)
+        source = self._initial_source()
+        lines = source.splitlines(keepends=True)
         for index, line in enumerate(lines):
             match = _SECTION_RE.match(line.strip())
             if match and match.group(1) == old_name:
@@ -155,7 +174,32 @@ class Config:
                     newline = "\r\n"
                 indent = line[: len(line) - len(line.lstrip())]
                 lines[index] = f"{indent}[{new_name}]{newline}"
-        self.source_text = "".join(lines)
+        source = "".join(lines)
+
+        old_reference = old_name.split(":", 1)[0]
+        new_reference = new_name.split(":", 1)[0]
+        action_names = "|".join(_LAYER_ACTIONS)
+        reference_pattern = re.compile(
+            rf"(?P<prefix>\b(?:{action_names})\(\s*)"
+            rf"{re.escape(old_reference)}(?=\s*[,)])"
+        )
+        updated_lines: list[str] = []
+        for line in source.splitlines(keepends=True):
+            binding = _BINDING_RE.match(line)
+            if binding is None:
+                updated_lines.append(line)
+                continue
+            value = reference_pattern.sub(
+                lambda match: f"{match.group('prefix')}{new_reference}",
+                binding.group("value"),
+            )
+            updated_lines.append(
+                f"{binding.group('indent')}{binding.group('key')}"
+                f"{binding.group('separator')}{value}"
+                f"{binding.group('newline') or ''}"
+            )
+        source = "".join(updated_lines)
+        self.update_from_text(source)
 
     def delete_layer(self, name: str) -> None:
         """Delete a layer while retaining every comment in the file."""

@@ -575,6 +575,44 @@ def test_layer_rail_creation_does_not_remap_selected_key():
     assert "layer(nav)" not in config.source()
 
 
+def test_f2_renames_focused_sidebar_layer_and_keeps_selection():
+    """F2 in the layer rail renames the model, source, and current layer."""
+    editor, config, _ = _create_live_editor_with_selected_key()
+    config.add_layer("nav")
+    config.set_mapping("main", "capslock", "layer(nav)")
+    editor.on_config_structure_changed()
+    nav_item = editor.layer_list.findItems("nav", Qt.MatchFlag.MatchExactly)[0]
+    editor.layer_list.setCurrentItem(nav_item)
+    editor.layer_list.setFocus()
+
+    with patch(
+        "ui.config_editor_bindings.QInputDialog.getText",
+        return_value=("movement", True),
+    ):
+        QTest.keyClick(editor.layer_list, Qt.Key.Key_F2)
+        QApplication.processEvents()
+
+    assert editor._current_layer == "movement"
+    assert "movement" in config.layers
+    assert "nav" not in config.layers
+    assert "[movement]" in editor.source_editor.toPlainText()
+    assert "layer(movement)" in editor.source_editor.toPlainText()
+    assert editor.layer_list.currentItem().text() == "movement"
+
+
+def test_main_layer_cannot_be_renamed_from_sidebar():
+    """The mandatory main layer ignores the rename command."""
+    editor, config, _ = _create_live_editor_with_selected_key()
+
+    with patch(
+        "ui.config_editor_bindings.QInputDialog.getText"
+    ) as rename_dialog:
+        editor._rename_current_layer()
+
+    rename_dialog.assert_not_called()
+    assert config.layer_order == ["main"]
+
+
 def test_physical_layout_uses_same_workspace_and_integrated_inspector():
     """Physical layout mode replaces inspector content without opening another page."""
     editor, _, key = _create_integrated_layout_editor()

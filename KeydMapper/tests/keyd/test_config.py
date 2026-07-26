@@ -221,6 +221,57 @@ macro_timeout = 700
     assert "macro_timeout = 700" in rendered
 
 
+def test_rename_layer_preserves_comments_and_updates_action_references():
+    """Renaming a layer patches headers and nested references losslessly."""
+    sample_content = """# Keep the document heading
+[ids]
+1234:5678
+
+[main]
+capslock = layer(nav)
+space = overload(nav, oneshot(nav))
+x = layerm(nav, macro(C-a))
+# Example remains literal: layer(nav)
+
+[nav:C]
+# Keep this layer note
+h = left
+"""
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open(read_data=sample_content)),
+        patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
+    ):
+        config = Config("rename.conf")
+
+    config.rename_layer("nav:C", "movement:C")
+    rendered = config.source()
+
+    assert "[movement:C]" in rendered
+    assert "[nav:C]" not in rendered
+    assert "layer(movement)" in rendered
+    assert "overload(movement, oneshot(movement))" in rendered
+    assert "layerm(movement, macro(C-a))" in rendered
+    assert "# Keep the document heading" in rendered
+    assert "# Keep this layer note" in rendered
+    assert "# Example remains literal: layer(nav)" in rendered
+
+
+def test_rename_layer_rejects_main_and_existing_name():
+    """Layer identity remains unambiguous after a visual rename."""
+    with (
+        patch("os.path.exists", return_value=False),
+        patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
+    ):
+        config = Config("rename-invalid.conf")
+    config.add_layer("nav")
+
+    with pytest.raises(ValueError, match="main"):
+        config.rename_layer("main", "base")
+    with pytest.raises(ValueError, match="already exists"):
+        config.rename_layer("nav", "main")
+
+
 def test_duplicate_binding_updates_only_effective_occurrence():
     """keyd uses the latest duplicate binding, so that is the one to patch."""
     sample_content = """[ids]
