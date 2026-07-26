@@ -7,6 +7,7 @@ import re
 # Qt helper widgets intentionally expose their behaviour through framework hooks.
 # pylint: disable=too-few-public-methods
 
+from keyd.actions import action_completions
 from keyd.key_validator import get_valid_keys
 from PySide6.QtCore import QRect, QSize, Qt, QStringListModel
 from PySide6.QtGui import (
@@ -22,31 +23,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QCompleter, QPlainTextEdit, QTextEdit, QWidget
 
 
-KEYD_ACTIONS = (
-    "layer()",
-    "oneshot()",
-    "swap()",
-    "setlayout()",
-    "clear()",
-    "toggle()",
-    "layerm()",
-    "oneshotm()",
-    "oneshotk()",
-    "swapm()",
-    "togglem()",
-    "clearm()",
-    "repeat()",
-    "overload()",
-    "overloadt()",
-    "overloadt2()",
-    "overloadi()",
-    "lettermod()",
-    "timeout()",
-    "macro()",
-    "macro2()",
-    "command()",
-    "noop",
-)
+KEYD_ACTIONS = action_completions()
 
 KEYD_GLOBALS = (
     "macro_timeout",

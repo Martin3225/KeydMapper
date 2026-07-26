@@ -43,16 +43,25 @@ def test_is_valid_value_empty():
 
 
 def test_is_valid_value_functions():
-    """Test that known functions with balanced parentheses are valid."""
+    """Test that known functions require balanced syntax and documented arity."""
     assert is_valid_value("layer(nav)") is True
     assert is_valid_value("macro(C-c)") is True
     assert is_valid_value("toggle(main)") is True
     assert is_valid_value("macro(layer(nav))") is True
+    assert is_valid_value("overload(control, esc)") is True
+    assert is_valid_value("layerm(nav, macro(C-a))") is True
+    assert is_valid_value("oneshotk(nav, a)") is True
+    assert is_valid_value("clear()") is True
+    assert is_valid_value("repeat()") is True
+    assert is_valid_value("noop") is True
 
     # Missing closing parenthesis
     assert is_valid_value("layer(nav") is False
     # Unbalanced parentheses
     assert is_valid_value("macro(layer(nav)") is False
+    # Known action with the wrong number of arguments
+    assert is_valid_value("overload(control)") is False
+    assert is_valid_value("layer(nav, shift)") is False
 
 
 def test_is_valid_value_modifiers():

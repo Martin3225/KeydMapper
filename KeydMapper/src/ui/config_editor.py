@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, cast
 
+from keyd.actions import parse_action
 from keyd.config import Config, ConfigSaveError
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QTextCursor
@@ -23,7 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from ui.actions.base import ConfigActionWidget
-from ui.actions.change_layer import ChangeLayerAction
+from ui.actions.keyd_action import KeydActionEditor
 from ui.actions.set_value import SetValueAction
 from ui.base_editor import BaseEditor
 from ui.config_source_editor import KeydSourceEditor
@@ -183,16 +184,16 @@ class ConfigEditor(BaseEditor):
         actions_layout.addWidget(QLabel("Action:"))
 
         self._action_selector = QComboBox()
-        self._action_selector.addItems(["Set key value", "Change layer"])
+        self._action_selector.addItems(["Key or shortcut", "Keyd action"])
         self._action_selector.currentIndexChanged.connect(self._on_action_mode_changed)
         actions_layout.addWidget(self._action_selector)
 
         self._action_stack = QStackedWidget()
         self.set_value_action = SetValueAction(self)
-        self.change_layer_action = ChangeLayerAction(self)
+        self.keyd_action = KeydActionEditor(self)
 
         self._action_stack.addWidget(self.set_value_action)
-        self._action_stack.addWidget(self.change_layer_action)
+        self._action_stack.addWidget(self.keyd_action)
         actions_layout.addWidget(self._action_stack)
         actions_layout.addStretch()
         self.inspector_splitter.addWidget(self.actions_page)
@@ -577,7 +578,7 @@ class ConfigEditor(BaseEditor):
     def _on_action_mode_changed(self, index: int) -> None:
         """Handles switching between different action modes."""
         self._action_stack.setCurrentIndex(index)
-        self._on_selection_changed()
+        self._active_action.on_selection_changed(self.get_selected_key_item())
 
     def _on_layer_changed(self, layer: str) -> None:
         """Updates the editor when the active layer is changed."""
@@ -595,7 +596,7 @@ class ConfigEditor(BaseEditor):
         self._refresh_scene_values()
 
         self.set_value_action.on_layer_changed(layer)
-        self.change_layer_action.on_layer_changed(layer)
+        self.keyd_action.on_layer_changed(layer)
 
         if hasattr(self, "delete_layer_btn"):
             self.delete_layer_btn.setEnabled(layer != "main")
@@ -723,7 +724,7 @@ class ConfigEditor(BaseEditor):
         self._refresh_layer_widgets(current_layer)
         self.source_editor.set_completion_layers(self.config.layer_order)
         self.set_value_action.on_layer_changed(current_layer)
-        self.change_layer_action.on_layer_changed(current_layer)
+        self.keyd_action.on_layer_changed(current_layer)
         self.delete_layer_btn.setEnabled(current_layer != "main")
         self._refresh_scene_values()
         self._on_selection_changed()
@@ -839,7 +840,7 @@ class ConfigEditor(BaseEditor):
             self._refresh_scene_values()
             self.source_editor.set_completion_layers(self.config.layer_order)
             self.set_value_action.on_layer_changed(self._current_layer)
-            self.change_layer_action.on_layer_changed(self._current_layer)
+            self.keyd_action.on_layer_changed(self._current_layer)
             self._on_selection_changed()
         self._pending_source_text = None
         self._history_guard = False
@@ -900,6 +901,12 @@ class ConfigEditor(BaseEditor):
         )
         self._action_selector.setEnabled(key is not None)
         self._action_stack.setEnabled(key is not None)
+        desired_mode = 1 if key and parse_action(key.key_value) else 0
+        if self._action_selector.currentIndex() != desired_mode:
+            self._action_selector.blockSignals(True)
+            self._action_selector.setCurrentIndex(desired_mode)
+            self._action_selector.blockSignals(False)
+            self._action_stack.setCurrentIndex(desired_mode)
         self._active_action.on_selection_changed(key)
         if key:
             self._focus_source_location(self._current_layer, key.key_name)

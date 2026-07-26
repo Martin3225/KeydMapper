@@ -3,6 +3,8 @@
 import subprocess
 from functools import cache
 
+from keyd.actions import parse_action, starts_with_known_action
+
 
 @cache
 def get_valid_keys() -> frozenset[str]:
@@ -37,16 +39,8 @@ def is_valid_value(value: str) -> bool:
     if not value:
         return True  # Empty - clear the mapping
 
-    # Keyd Actions
-    known_functions = (
-        "layer(", "macro(", "macro2(", "toggle(", "oneshot(", "swap(", 
-        "taphold(", "timeout(", "clearm(", "clear()", "noop", "overload(",
-        "setlayout(", "layerm(", "oneshotm(", "oneshotk(", "swapm(", 
-        "togglem(", "repeat()", "overloadt(", "overloadt2(", "overloadi(", 
-        "lettermod(", "command(",
-    )
-    if any(value.startswith(f) for f in known_functions):
-        return value.count("(") == value.count(")")
+    if starts_with_known_action(value):
+        return parse_action(value) is not None
 
     parts = value.split("-")
     base_key = parts[-1]

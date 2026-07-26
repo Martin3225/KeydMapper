@@ -14,6 +14,14 @@ vrstev (našeptávání lze kdykoliv otevřít pomocí `Ctrl+Space`). Ručně vl
 komentáře, direktivy `include` a ostatní neupravované části souboru zůstávají při
 generování zachované. Správnost rozpracovaného textu ověřuje přímo `keyd check`.
 
+Vizuální Binding editor pokrývá také všechny akce keyd (`oneshot`, `swap`,
+`toggle`, `setlayout`, `clear`, `repeat`, `overload*`, `lettermod`, `timeout`,
+`macro2`, `command` a `noop`). Makro varianty nejsou v nabídce duplikované:
+například u běžné akce **Hold layer** lze zapnout **Also run a macro** a
+KeydMapper automaticky vygeneruje odpovídající `layerm(...)`. Stejný model platí
+pro `oneshotm`, `swapm`, `togglem` a `clearm`; existující ručně zapsané varianty
+se zpětně načtou do stejných vizuálních ovládacích prvků.
+
 Fyzické rozmístění kláves je součástí stejného pracovního prostoru. Položka
 **Physical layout** dole v levé navigaci přepne společné plátno do režimu
 přesouvání a pojmenování kláves; pravý Inspector se změní na nástroje vybrané

@@ -417,6 +417,39 @@ def test_visual_binding_change_reveals_generated_config_line():
     assert "a = layer(nav)" in editor.source_editor.textCursor().selectedText()
 
 
+def test_keyd_action_is_loaded_as_normalized_visual_form():
+    """Internal macro variants appear as an option on their base action."""
+    editor, _, key = _create_live_editor_with_selected_key()
+    editor.set_key_mapping(key, "layerm(nav, macro(C-a))")
+
+    editor._on_selection_changed()
+
+    assert editor._action_selector.currentText() == "Keyd action"
+    assert editor.keyd_action.current_action_id == "layer"
+    assert editor.keyd_action._macro_checkbox.isChecked() is True
+    assert editor.keyd_action._macro_input.text() == "macro(C-a)"
+
+
+def test_visual_keyd_action_immediately_updates_generated_config():
+    """A complete visual action writes its low-level syntax to the live preview."""
+    editor, config, key = _create_live_editor_with_selected_key()
+    config.add_layer("nav")
+    editor.on_config_structure_changed()
+    editor._action_selector.setCurrentIndex(1)
+    action = editor.keyd_action
+    action._action_selector.setCurrentIndex(
+        action._action_selector.findData("toggle")
+    )
+    action._field_widgets["layer"].setCurrentText("nav")
+    action._macro_checkbox.setChecked(True)
+    action._macro_input.setText("macro(C-a)")
+
+    action._apply()
+
+    assert key.key_value == "togglem(nav, macro(C-a))"
+    assert "a = togglem(nav, macro(C-a))" in editor.source_editor.toPlainText()
+
+
 def test_layer_rail_changes_the_active_visual_layer():
     """The left rail replaces the old toolbar combobox as visible navigation."""
     editor, config, key = _create_live_editor_with_selected_key()
