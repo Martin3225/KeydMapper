@@ -10,6 +10,7 @@ from copy import deepcopy
 
 from constants import CONFIGS_PATH, KEYD_CONFIG_PATH
 from keyd.layout import get_device_id_from_config
+from keyd.system_helper import SystemHelperError, apply_config
 
 
 _SECTION_RE = re.compile(r"^\s*\[([^\]]+)\]\s*$")
@@ -435,38 +436,23 @@ class Config:
             raise ConfigSaveError(f"Cannot save invalid configuration:\n\n{warning}")
 
     def _copy_to_system(self, local_path: str, old_name: str | None = None) -> None:
-        """Copy the local config to keyd's path and restart the daemon."""
-        cmd = ["pkexec", "sh", "-c", f"cp '{local_path}' '{self.keyd_path}'"]
+        """Apply through the installed root-owned helper without invoking a shell."""
+        try:
+            with open(local_path, "r", encoding="utf-8") as local_config:
+                apply_config(
+                    local_config.read(),
+                    self.name,
+                    old_name,
+                )
+        except (OSError, SystemHelperError) as exc:
+            raise ConfigSaveError(
+                f"Failed to apply config to system:\n{exc}"
+            ) from exc
 
         if old_name:
             local_old = os.path.join(CONFIGS_PATH, old_name)
-            system_old = os.path.join(KEYD_CONFIG_PATH, old_name)
-
-            if os.path.exists(local_old):
+            if local_old != local_path and os.path.exists(local_old):
                 os.remove(local_old)
-
-            if os.path.exists(system_old):
-                cmd[3] += f" && rm -f '{system_old}'"
-
-        cmd[3] += " && systemctl restart keyd"
-
-        try:
-            with subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            ) as process:
-                _, stderr = process.communicate()
-
-                if process.returncode != 0:
-                    raise ConfigSaveError(
-                        f"Failed to apply config to system:\n{stderr}"
-                    )
-        except FileNotFoundError as exc:
-            raise ConfigSaveError(
-                "The 'pkexec' command was not found. Cannot apply configuration on this system."
-            ) from exc
 
     def set_config_enable(self, enable: bool) -> None:
         """Enable or disable the configuration by saving it under a new suffix."""
@@ -478,12 +464,24 @@ class Config:
             return
 
         self._update_name(new_name)
+        local_new = os.path.join(CONFIGS_PATH, new_name)
+        previous_local: bytes | None = None
+        if os.path.isfile(local_new):
+            with open(local_new, "rb") as previous_file:
+                previous_local = previous_file.read()
 
         try:
-            local_new = os.path.join(CONFIGS_PATH, new_name)
             self._write_config_to_local(local_new)
             self._copy_to_system(local_new, old_name)
         except Exception:
+            if previous_local is None:
+                try:
+                    os.remove(local_new)
+                except FileNotFoundError:
+                    pass
+            else:
+                with open(local_new, "wb") as previous_file:
+                    previous_file.write(previous_local)
             self._update_name(old_name)
             raise
 

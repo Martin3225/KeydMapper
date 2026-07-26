@@ -61,6 +61,31 @@ Aplikace bude dostupná pod globálním příkazem `keyd-mapper` přímo v termi
 pip install -e .
 ```
 
+### 4. Instalace systémového helperu (Linux)
+
+Apply, Enable a Disable potřebují bezpečně zapisovat do `/etc/keyd`. Nainstalujte
+proto malý privilegovaný helper a jeho Polkit policy:
+
+```bash
+sudo ./scripts/install-system-helper.sh
+```
+
+Instalátor zkopíruje helper jako rootem vlastněný soubor do `/usr/libexec` a
+policy do `/usr/share/polkit-1/actions`. Aplikace nikdy nespouští svou
+uživatelsky zapisovatelnou vývojovou kopii jako root.
+
+Při prvním systémovém Apply se zobrazí standardní Polkit dialog.
+Potom aplikace používá jeden úzce omezený privilegovaný proces, takže další
+Apply, Enable nebo Disable v téže spuštěné instanci už heslo nevyžadují.
+Pomocník je připojený pouze přes privátní roury k danému procesu KeydMapperu;
+při zavření nebo pádu aplikace dostane EOF a skončí. Při příštím spuštění
+aplikace se proto autorizace provede znovu.
+Lokální editace a nahrávání kláves žádná zvýšená oprávnění nepotřebují.
+
+Helper nepoužívá shell: přijímá config přes standardní vstup, kontroluje název,
+spustí `keyd check`, provede atomickou výměnu v `/etc/keyd` a restartuje
+`keyd.service`. Pokud validace nebo restart selže, obnoví předchozí soubory.
+
 ## Spuštění
 
 ### a. Spuštění z terminálu (Bash / pwsh):

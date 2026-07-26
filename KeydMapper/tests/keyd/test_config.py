@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 from keyd.config import Config, ConfigSaveError
+from keyd.system_helper import SystemHelperError
 
 
 def test_config_initialization_with_no_file():
@@ -72,7 +73,7 @@ j = down
 def test_config_saves_correctly():
     """
     This test checks if calling .save() correctly writes to a file
-    and tries to copy it to the system folder using 'pkexec'.
+    and delegates the privileged transaction to the installed helper.
     """
 
     with (
@@ -87,13 +88,8 @@ def test_config_saves_correctly():
     with (
         patch("builtins.open", m),
         patch("os.makedirs"),
-        patch("subprocess.Popen") as mock_popen,
+        patch("keyd.config.apply_config") as mock_apply,
     ):
-        mock_process = MagicMock()
-        mock_process.communicate.return_value = ("", "")
-        mock_process.returncode = 0
-        mock_popen.return_value.__enter__.return_value = mock_process
-
         # Act
         config.save()
 
@@ -109,11 +105,8 @@ def test_config_saves_correctly():
         assert "[ids]\n1234:5678" in written_text
         assert "[main]\na = b" in written_text
 
-        mock_popen.assert_called()
-        args, _ = mock_popen.call_args
-        cmd_str = " ".join(args[0])
-        assert "pkexec" in cmd_str
-        assert "cp" in cmd_str
+        mock_apply.assert_called_once()
+        assert mock_apply.call_args.args[1:] == ("save_test.conf", None)
 
 
 def test_config_save_invalid_config():
@@ -159,8 +152,8 @@ def test_config_set_enable_invalid_config():
         assert "Error on line 1" in str(excinfo.value)
 
 
-def test_config_save_pkexec_missing():
-    """Test that saving raises ConfigSaveError when pkexec is missing."""
+def test_config_save_wraps_system_helper_error():
+    """A privileged helper failure is exposed as a ConfigSaveError."""
     with (
         patch("os.path.exists", return_value=False),
         patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
@@ -172,13 +165,15 @@ def test_config_save_pkexec_missing():
         patch("builtins.open", m),
         patch("os.makedirs"),
         patch("keyd.config.Config.check", return_value=None),
-        patch("subprocess.Popen", side_effect=FileNotFoundError),
+        patch(
+            "keyd.config.apply_config",
+            side_effect=SystemHelperError("pkexec was not found"),
+        ),
     ):
         with pytest.raises(ConfigSaveError) as excinfo:
             config.save()
 
-        assert "pkexec" in str(excinfo.value)
-        assert "command was not found" in str(excinfo.value)
+        assert "pkexec was not found" in str(excinfo.value)
 
 
 def test_visual_mapping_change_preserves_comments_and_directives():

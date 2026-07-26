@@ -5,6 +5,7 @@ import shutil
 import sys
 
 from constants import LAYOUTS_PATH, RES_PATH
+from keyd.system_helper import close_system_helper
 from PySide6.QtWidgets import QApplication, QMessageBox
 from ui.main_window import MainWindow
 
@@ -14,6 +15,7 @@ def main() -> None:
 
     print("Starting KeydMapper...")
     app = QApplication(sys.argv)
+    app.aboutToQuit.connect(close_system_helper)
 
     if not shutil.which("keyd"):
         print(
