@@ -163,25 +163,51 @@ class LayoutEditor(BaseEditor):
 
     def _apply_key(self, _text: str = "") -> None:
         """Applies the current input name to the selected key."""
-        key = self.get_selected_key_item()
-        if not key:
-            return
-        name = self._name_input.text().strip()
-        if not name:
-            return
-        if not is_valid_key(name):
+        error = self.rename_selected_key(self._name_input.text())
+        if error == "invalid":
             self._name_input.setStyleSheet("border: 1px solid orange;")
-            return
-        duplicate = any(
+        elif error == "duplicate":
+            self._name_input.setStyleSheet("border: 1px solid red;")
+        elif error is None:
+            self._name_input.setStyleSheet("")
+
+    def rename_selected_key(self, name: str) -> str | None:
+        """Rename the selected key and return a compact validation error code."""
+        key = self.get_selected_key_item()
+        name = name.strip()
+        if not key or not name:
+            return "empty"
+        if not is_valid_key(name):
+            return "invalid"
+        if any(
             isinstance(item, KeyItem) and item is not key and item.key_name == name
             for item in self._scene.items()
-        )
-        if duplicate:
-            self._name_input.setStyleSheet("border: 1px solid red;")
-            return
-        self._name_input.setStyleSheet("")
+        ):
+            return "duplicate"
         key.key_name = name
         key.update()
+        return None
+
+    @property
+    def recorder(self) -> KeyRecorder:
+        """Expose the shared recorder to the integrated layout inspector."""
+        return self._recorder
+
+    def add_key(self) -> None:
+        """Add a key through the reusable layout controller."""
+        self._add_button()
+
+    def delete_selected_keys(self) -> None:
+        """Delete selected keys through the reusable layout controller."""
+        self._delete_key()
+
+    def choose_layout(self) -> None:
+        """Open the layout chooser through the reusable layout controller."""
+        self._load_layout_dialog()
+
+    def reload_saved_layout(self) -> None:
+        """Discard in-memory geometry changes and restore the saved layout."""
+        self._populate_scene(load_layout(self._device_id))
 
     def _delete_key(self) -> None:
         """Deletes all currently selected KeyItems from the scene."""
@@ -226,6 +252,11 @@ class LayoutEditor(BaseEditor):
 
     def _save(self) -> None:
         """Saves the current layout (positions and sizes) to disk."""
+        self.save_current_layout()
+        self.layout_done.emit()
+
+    def save_current_layout(self) -> None:
+        """Persist the current physical layout without changing editor mode."""
         buttons = [
             LayoutButton(
                 name=item.key_name,
@@ -239,4 +270,3 @@ class LayoutEditor(BaseEditor):
             if isinstance(item, KeyItem)
         ]
         save_layout(Layout(device_id=self._device_id, buttons=buttons))
-        self.layout_done.emit()

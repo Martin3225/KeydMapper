@@ -4,12 +4,14 @@
 from unittest.mock import MagicMock, patch
 
 from keyd.config import Config
-from PySide6.QtCore import QRectF, Qt
+from keyd.layout import Layout
+from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from ui.config_editor import ConfigEditor
 from ui.key_item import KeyItem
+from ui.layout_editor import LayoutEditor
 
 
 def test_config_editor_set_key_mapping():
@@ -130,6 +132,41 @@ def _create_live_editor_with_selected_key() -> tuple[ConfigEditor, Config, KeyIt
     editor = ConfigEditor(config=config, scene=mock_scene, view=mock_view)
     mock_scene.selectedItems.return_value = [key]
     return editor, config, key
+
+
+def _create_integrated_layout_editor() -> tuple[
+    ConfigEditor, LayoutEditor, KeyItem
+]:
+    """Create the shared workspace with its reusable physical-layout controller."""
+    with (
+        patch("os.path.exists", return_value=False),
+        patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
+    ):
+        config = Config("integrated.conf")
+
+    mock_scene = MagicMock()
+    mock_view = MagicMock()
+    mock_view.mapToScene.return_value = QPointF(100, 100)
+    key = KeyItem("a", "", QRectF(0, 0, 10, 10))
+    mock_scene.items.return_value = [key]
+    mock_scene.selectedItems.return_value = []
+    with patch(
+        "ui.layout_editor.load_layout",
+        return_value=Layout(device_id="1234:5678"),
+    ):
+        layout_editor = LayoutEditor(
+            device_id="1234:5678",
+            scene=mock_scene,
+            view=mock_view,
+        )
+    editor = ConfigEditor(
+        config=config,
+        scene=mock_scene,
+        view=mock_view,
+        layout_editor=layout_editor,
+    )
+    mock_scene.selectedItems.return_value = [key]
+    return editor, layout_editor, key
 
 
 def test_source_edit_does_not_replace_selected_literal_with_empty_layer():
@@ -452,3 +489,78 @@ def test_layer_rail_creation_does_not_remap_selected_key():
     assert "nav:C" in config.layers
     assert config.layers["main"]["a"] == "left"
     assert "layer(nav)" not in config.source()
+
+
+def test_physical_layout_uses_same_workspace_and_integrated_inspector():
+    """Physical layout mode replaces inspector content without opening another page."""
+    editor, _, key = _create_integrated_layout_editor()
+    editor.activate_mode()
+    assert key.locked is True
+
+    editor.enter_layout_mode()
+
+    assert editor._editing_layout is True
+    assert editor.inspector_stack.currentWidget() == editor.layout_inspector
+    assert editor.layer_list.isEnabled() is False
+    assert editor.save_apply_btn.text() == "Save layout and Done"
+    assert key.locked is False
+
+
+def test_saving_integrated_layout_returns_to_last_layer():
+    """Save layout and Done persists geometry and restores Binding/config."""
+    editor, layout_editor, key = _create_integrated_layout_editor()
+    layout_editor.save_current_layout = MagicMock()
+    editor.enter_layout_mode()
+
+    editor._save()
+
+    layout_editor.save_current_layout.assert_called_once()
+    assert editor._editing_layout is False
+    assert editor.inspector_stack.currentWidget() == editor.inspector_splitter
+    assert editor.save_apply_btn.text() == "Save and Apply"
+    assert editor.layer_list.isEnabled() is True
+    assert key.locked is True
+
+
+def test_clicking_physical_layout_again_saves_and_exits_mode():
+    """The left navigation item behaves as a friendly two-way mode toggle."""
+    editor, layout_editor, _ = _create_integrated_layout_editor()
+    layout_editor.save_current_layout = MagicMock()
+
+    editor.keyboard_layout_btn.click()
+    assert editor._editing_layout is True
+    assert editor.keyboard_layout_btn.isChecked() is True
+
+    editor.keyboard_layout_btn.click()
+
+    layout_editor.save_current_layout.assert_called_once()
+    assert editor._editing_layout is False
+    assert editor.keyboard_layout_btn.isChecked() is False
+    assert editor.inspector_stack.currentWidget() == editor.inspector_splitter
+
+
+def test_back_from_layout_discards_geometry_without_leaving_config():
+    """Back in layout mode reloads saved geometry and stays in the editor shell."""
+    editor, layout_editor, _ = _create_integrated_layout_editor()
+    layout_editor.reload_saved_layout = MagicMock()
+    close_requested = MagicMock()
+    editor.cancel_requested.connect(close_requested)
+    editor.enter_layout_mode()
+
+    editor._handle_back()
+
+    layout_editor.reload_saved_layout.assert_called_once()
+    close_requested.assert_not_called()
+    assert editor._editing_layout is False
+
+
+def test_integrated_key_inspector_renames_selected_physical_key():
+    """The right Key inspector reuses LayoutEditor's validation/controller."""
+    editor, _, key = _create_integrated_layout_editor()
+    editor.enter_layout_mode()
+    editor._update_layout_selection()
+
+    editor._apply_layout_key_name("enter")
+
+    assert key.key_name == "enter"
+    assert editor.layout_name_input.styleSheet() == ""

@@ -1,6 +1,6 @@
-"""Editor for keyd configuration."""
+"""Integrated visual editor for keyd bindings and physical keyboard layouts."""
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from keyd.config import Config, ConfigSaveError
 from PySide6.QtCore import QSettings, Qt, QTimer
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
@@ -29,6 +30,10 @@ from ui.config_source_editor import KeydSourceEditor
 from ui.context import EditorContext
 from ui.key_item import KeyItem
 from ui.layout_view import LayoutView
+from ui.record_button import RecordButton
+
+if TYPE_CHECKING:
+    from ui.layout_editor import LayoutEditor
 
 
 # @generated [partially] Gemini 3.1: Graphics and styling adjustments
@@ -42,12 +47,15 @@ class ConfigEditor(BaseEditor):
         config: Config,
         scene: QGraphicsScene,
         view: LayoutView,
+        layout_editor: "LayoutEditor | None" = None,
     ):
         context = EditorContext(scene=scene, view=view)
         super().__init__(
             context=context,
         )
         self.config = config
+        self._layout_editor = layout_editor
+        self._editing_layout = False
         self._has_live_source = isinstance(
             getattr(self.config, "source_text", None), str
         )
@@ -69,7 +77,7 @@ class ConfigEditor(BaseEditor):
 
         # Toolbar
         self.back_btn = QPushButton("Back")
-        self.back_btn.clicked.connect(self.cancel_requested)
+        self.back_btn.clicked.connect(self._handle_back)
         self.toolbar_layout.addWidget(self.back_btn)
 
         self.config_name_label = QLabel(f"{self.config.name}")
@@ -101,7 +109,7 @@ class ConfigEditor(BaseEditor):
         self.redo_btn.clicked.connect(self.redo_config_change)
         self.toolbar_layout.addWidget(self.redo_btn)
 
-        self.save_apply_btn = QPushButton("Save & Apply")
+        self.save_apply_btn = QPushButton("Save and Apply")
         self.save_apply_btn.clicked.connect(self._save)
         self.toolbar_layout.addWidget(self.save_apply_btn)
 
@@ -133,15 +141,35 @@ class ConfigEditor(BaseEditor):
         layer_buttons.addWidget(self.delete_layer_btn)
         layer_panel_layout.addLayout(layer_buttons)
 
+        layer_divider = QFrame()
+        layer_divider.setFrameShape(QFrame.Shape.HLine)
+        layer_panel_layout.addWidget(layer_divider)
+        layer_panel_layout.addWidget(QLabel("KEYBOARD"))
+
+        self.keyboard_layout_btn = QPushButton("⌨  Physical layout")
+        self.keyboard_layout_btn.setCheckable(True)
+        self.keyboard_layout_btn.setEnabled(self._layout_editor is not None)
+        self.keyboard_layout_btn.clicked.connect(self._toggle_layout_mode)
+        layer_panel_layout.addWidget(self.keyboard_layout_btn)
+
+        device_id = getattr(self.config, "device_id", None)
+        self.device_label = QLabel(str(device_id or "Unknown device"))
+        self.device_label.setWordWrap(True)
+        self.device_label.setStyleSheet("color: #777;")
+        layer_panel_layout.addWidget(self.device_label)
+
         self._splitter.insertWidget(0, self.layer_panel)
         self._splitter.setChildrenCollapsible(True)
 
         # Right inspector: binding controls and generated config are simultaneous.
         self.side_panel.setMinimumWidth(0)
         self.side_panel.setMaximumWidth(16777215)
+        self.inspector_stack = QStackedWidget()
+        self.panel_layout.addWidget(self.inspector_stack)
+
         self.inspector_splitter = QSplitter(Qt.Orientation.Vertical)
         self.inspector_splitter.setChildrenCollapsible(True)
-        self.panel_layout.addWidget(self.inspector_splitter)
+        self.inspector_stack.addWidget(self.inspector_splitter)
 
         self.actions_page = QWidget()
         actions_layout = QVBoxLayout(self.actions_page)
@@ -219,6 +247,52 @@ class ConfigEditor(BaseEditor):
         self.inspector_splitter.setStretchFactor(1, 3)
         self.inspector_splitter.setSizes([260, 390])
 
+        # Integrated physical-layout inspector.
+        self.layout_inspector = QWidget()
+        layout_inspector_layout = QVBoxLayout(self.layout_inspector)
+        layout_inspector_layout.setContentsMargins(6, 6, 6, 6)
+        layout_title = QLabel("KEY")
+        layout_title.setStyleSheet("font-weight: bold;")
+        layout_inspector_layout.addWidget(layout_title)
+
+        self.layout_selection_hint = QLabel("Select a key on the keyboard")
+        self.layout_selection_hint.setWordWrap(True)
+        layout_inspector_layout.addWidget(self.layout_selection_hint)
+        layout_inspector_layout.addWidget(QLabel("Key name:"))
+
+        self.layout_name_input = QLineEdit()
+        self.layout_name_input.textEdited.connect(self._apply_layout_key_name)
+        layout_inspector_layout.addWidget(self.layout_name_input)
+
+        if self._layout_editor is not None:
+            self.layout_record_btn = RecordButton(self._layout_editor.recorder)
+            self._layout_editor.recorder.key_recorded.connect(
+                self._on_integrated_key_recorded
+            )
+        else:
+            self.layout_record_btn = QPushButton("Record")
+            self.layout_record_btn.setEnabled(False)
+        layout_inspector_layout.addWidget(self.layout_record_btn)
+
+        self.layout_delete_btn = QPushButton("Delete key")
+        self.layout_delete_btn.clicked.connect(self._delete_layout_key)
+        self.layout_delete_btn.setEnabled(False)
+        layout_inspector_layout.addWidget(self.layout_delete_btn)
+
+        layout_actions = QHBoxLayout()
+        self.layout_add_btn = QPushButton("Add key")
+        self.layout_add_btn.clicked.connect(self._add_layout_key)
+        layout_actions.addWidget(self.layout_add_btn)
+        self.layout_load_btn = QPushButton("Load layout")
+        self.layout_load_btn.clicked.connect(self._choose_layout)
+        layout_actions.addWidget(self.layout_load_btn)
+        layout_inspector_layout.addLayout(layout_actions)
+        layout_inspector_layout.addStretch()
+        layout_inspector_layout.addWidget(
+            QLabel("Drag: move key\nCtrl + drag: snap to grid\nScroll: zoom")
+        )
+        self.inspector_stack.addWidget(self.layout_inspector)
+
         self._overlay.hide()
         self._source_splitter_sizes = [260, 390]
         self._source_preview_visible = True
@@ -240,7 +314,15 @@ class ConfigEditor(BaseEditor):
             self._run_keyd_validation()
 
     def activate_mode(self) -> None:
-        """Sets up the shared view and items for configuration editing."""
+        """Activate whichever integrated editing mode is currently selected."""
+        if self._editing_layout and self._layout_editor is not None:
+            self._layout_editor.activate_mode()
+            self._update_layout_selection()
+            return
+        self._activate_config_mode()
+
+    def _activate_config_mode(self) -> None:
+        """Set up the shared view and items for key binding editing."""
         self._view.disconnect_signals()
 
         for item in self._scene.items():
@@ -248,6 +330,115 @@ class ConfigEditor(BaseEditor):
                 item.locked = True
         self._refresh_scene_values()
         self._sync_source_editor()
+
+    def _handle_back(self) -> None:
+        """Leave layout mode first; otherwise return to configuration selection."""
+        if self._editing_layout:
+            if self._layout_editor is not None:
+                self._layout_editor.reload_saved_layout()
+            self._leave_layout_mode()
+            return
+        self.cancel_requested.emit()
+
+    def _toggle_layout_mode(self, checked: bool) -> None:
+        """Enter physical-layout editing from the persistent left navigation."""
+        if checked:
+            self.enter_layout_mode()
+        elif self._editing_layout:
+            # Toggling the navigation item off mirrors Save layout and Done.
+            self._save()
+
+    def enter_layout_mode(self) -> None:
+        """Switch the same canvas and inspector into physical-layout editing."""
+        if self._layout_editor is None or self._editing_layout:
+            return
+        self._editing_layout = True
+        self.keyboard_layout_btn.blockSignals(True)
+        self.keyboard_layout_btn.setChecked(True)
+        self.keyboard_layout_btn.blockSignals(False)
+        self.layer_list.setEnabled(False)
+        self.new_layer_btn.setEnabled(False)
+        self.delete_layer_btn.setEnabled(False)
+        self.enable_btn.setEnabled(False)
+        self.undo_btn.setEnabled(False)
+        self.redo_btn.setEnabled(False)
+        self.save_apply_btn.setText("Save layout and Done")
+        self.save_apply_btn.setEnabled(True)
+        self.overall_status.setText("Editing physical layout")
+        self.overall_status.setStyleSheet("")
+        self.inspector_stack.setCurrentWidget(self.layout_inspector)
+        self._layout_editor.activate_mode()
+        self._update_layout_selection()
+
+    def _leave_layout_mode(self) -> None:
+        """Return to the last active keyd layer without replacing the workspace."""
+        if not self._editing_layout:
+            return
+        if isinstance(self.layout_record_btn, RecordButton):
+            self.layout_record_btn.reset()
+        self._editing_layout = False
+        self.keyboard_layout_btn.blockSignals(True)
+        self.keyboard_layout_btn.setChecked(False)
+        self.keyboard_layout_btn.blockSignals(False)
+        self.layer_list.setEnabled(True)
+        self.new_layer_btn.setEnabled(True)
+        self.enable_btn.setEnabled(True)
+        self.save_apply_btn.setText("Save and Apply")
+        self.inspector_stack.setCurrentWidget(self.inspector_splitter)
+        self._activate_config_mode()
+        self._refresh_layer_widgets(self._current_layer)
+        self._update_history_actions()
+        self._update_overall_status()
+        self._run_keyd_validation()
+
+    def _update_layout_selection(self) -> None:
+        """Update the integrated Key inspector from the shared scene selection."""
+        key = self.get_selected_key_item()
+        self.layout_name_input.blockSignals(True)
+        self.layout_name_input.setText(key.key_name if key else "")
+        self.layout_name_input.blockSignals(False)
+        self.layout_selection_hint.setText(
+            f"Selected key: {key.key_name}" if key else "Select a key on the keyboard"
+        )
+        enabled = key is not None
+        self.layout_name_input.setEnabled(enabled)
+        self.layout_delete_btn.setEnabled(enabled)
+        self.layout_record_btn.setEnabled(enabled)
+
+    def _apply_layout_key_name(self, name: str) -> None:
+        """Validate and apply a physical key name in the integrated inspector."""
+        if self._layout_editor is None:
+            return
+        error = self._layout_editor.rename_selected_key(name)
+        if error == "invalid":
+            self.layout_name_input.setStyleSheet("border: 1px solid orange;")
+        elif error == "duplicate":
+            self.layout_name_input.setStyleSheet("border: 1px solid red;")
+        elif error is None:
+            self.layout_name_input.setStyleSheet("")
+            self.layout_selection_hint.setText(f"Selected key: {name.strip()}")
+
+    def _on_integrated_key_recorded(self, key_name: str) -> None:
+        """Mirror a recorded key into the integrated inspector."""
+        if not self._editing_layout:
+            return
+        self.layout_name_input.setText(key_name)
+        self._apply_layout_key_name(key_name)
+
+    def _add_layout_key(self) -> None:
+        """Add a physical key through the integrated controller."""
+        if self._layout_editor is not None:
+            self._layout_editor.add_key()
+
+    def _delete_layout_key(self) -> None:
+        """Delete selected physical keys through the integrated controller."""
+        if self._layout_editor is not None:
+            self._layout_editor.delete_selected_keys()
+
+    def _choose_layout(self) -> None:
+        """Open the saved-layout chooser without leaving the workspace."""
+        if self._layout_editor is not None:
+            self._layout_editor.choose_layout()
 
     def attach_view(self) -> None:
         """Attach the shared keyboard view between layer rail and inspector."""
@@ -700,6 +891,9 @@ class ConfigEditor(BaseEditor):
         """Handles selection changes by updating the active action widget."""
         super()._on_selection_changed()
         self._overlay.hide()
+        if self._editing_layout:
+            self._update_layout_selection()
+            return
         key = self.get_selected_key_item()
         self.selection_hint.setText(
             f"Selected key: {key.key_name}" if key else "Select a key on the keyboard"
@@ -712,6 +906,12 @@ class ConfigEditor(BaseEditor):
 
     def _save(self) -> None:
         """Saves the current configuration to disk."""
+        if self._editing_layout:
+            if self._layout_editor is not None:
+                self._layout_editor.save_current_layout()
+            self._leave_layout_mode()
+            return
+
         diagnostics = Config.diagnostics(self.source_editor.toPlainText())
         if diagnostics:
             QMessageBox.warning(

@@ -14,6 +14,13 @@ vrstev (našeptávání lze kdykoliv otevřít pomocí `Ctrl+Space`). Ručně vl
 komentáře, direktivy `include` a ostatní neupravované části souboru zůstávají při
 generování zachované. Správnost rozpracovaného textu ověřuje přímo `keyd check`.
 
+Fyzické rozmístění kláves je součástí stejného pracovního prostoru. Položka
+**Physical layout** dole v levé navigaci přepne společné plátno do režimu
+přesouvání a pojmenování kláves; pravý Inspector se změní na nástroje vybrané
+klávesy. Uživatel se tedy nepřesouvá do samostatné záložky ani obrazovky.
+Úvodní obrazovka zobrazuje konfigurace v kompaktním seznamu společně se
+zařízením a stavem Enabled/Disabled.
+
 ## Požadavky a Závislosti
 
 Pokud chcete aby remapování fungovalo, musíte mít nainstalovaný [keyd](https://github.com/rvaiya/keyd) a být na linuxu.

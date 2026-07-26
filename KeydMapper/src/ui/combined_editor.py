@@ -1,4 +1,4 @@
-"""Main editor widget that combines layout and configuration editing in tabs."""
+"""Main editor widget with one integrated binding/layout workspace."""
 
 
 
@@ -8,7 +8,6 @@ from PySide6.QtGui import QBrush, QColor, QPainter
 from PySide6.QtWidgets import (
     QGraphicsScene,
     QGraphicsView,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -23,9 +22,8 @@ from ui.layout_view import SCENE_HEIGHT, SCENE_WIDTH, LayoutView
 # pylint: disable=too-many-instance-attributes,too-few-public-methods
 class CombinedEditor(QWidget):
     """
-    Main container for editing a keyd configuration.
-    It manages a shared QGraphicsScene and LayoutView between two modes:
-    Layout (positioning keys) and Config (mapping keys to actions).
+    Main container for editing a keyd configuration in one persistent shell.
+    Physical layout editing reuses the same scene, canvas and inspector.
     """
 
     closed = Signal()
@@ -49,48 +47,26 @@ class CombinedEditor(QWidget):
         self.shared_view.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
 
         layout = QVBoxLayout(self)
-        self.tabs = QTabWidget()
-        layout.addWidget(self.tabs)
 
         self.layout_editor = LayoutEditor(
             device_id=self.device_id,
             scene=self.shared_scene,
             view=self.shared_view,
         )
-        self.layout_editor.layout_done.connect(self._on_layout_done)
-        self.layout_editor.cancel_requested.connect(self.closed.emit)
 
         self.config_editor = ConfigEditor(
             config=self.config,
             scene=self.shared_scene,
             view=self.shared_view,
+            layout_editor=self.layout_editor,
         )
         self.config_editor.cancel_requested.connect(self.closed.emit)
+        layout.addWidget(self.config_editor)
 
-        self.tabs.addTab(self.layout_editor, "Layout")
-        self.tabs.addTab(self.config_editor, "Config")
-
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-
-        # Initial selection
+        self.config_editor.attach_view()
+        self.config_editor.activate_mode()
         if not does_layout_exist(self.device_id):
-            self.tabs.setCurrentWidget(self.layout_editor)
-        else:
-            self.tabs.setCurrentWidget(self.config_editor)
-
-        # Manually trigger the first setup
-        self._on_tab_changed(self.tabs.currentIndex())
+            self.config_editor.enter_layout_mode()
 
         # Center the view on the scene
         self.shared_view.centerOn(SCENE_WIDTH / 2, SCENE_HEIGHT / 2)
-
-    def _on_tab_changed(self, index: int) -> None:
-        """Handles switching between editor modes by re-attaching the shared view."""
-        editor = self.tabs.widget(index)
-        if isinstance(editor, (LayoutEditor, ConfigEditor)):
-            editor.attach_view()
-            editor.activate_mode()
-
-    def _on_layout_done(self) -> None:
-        """Called when layout editing is finished, switches to configuration editing."""
-        self.tabs.setCurrentWidget(self.config_editor)

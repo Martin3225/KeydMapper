@@ -3,7 +3,6 @@
 
 from unittest.mock import MagicMock, patch
 
-from PySide6.QtWidgets import QPushButton
 from ui.config_selector import ConfigSelector
 
 
@@ -24,8 +23,11 @@ def test_config_selector_open_existing_config(mock_listdir) -> None:
 
 
 @patch("ui.config_selector.os.listdir")
-def test_config_selector_displays_all_configs(mock_listdir) -> None:
-    """Test that all valid configurations are displayed as buttons."""
+@patch("ui.config_selector.get_device_id_from_config", return_value="1234:5678")
+def test_config_selector_displays_all_configs(
+    _mock_device_id, mock_listdir
+) -> None:
+    """Test that valid configurations are displayed as compact rows."""
     # Arrange
     mock_listdir.return_value = [
         "config1.conf",
@@ -38,19 +40,18 @@ def test_config_selector_displays_all_configs(mock_listdir) -> None:
     selector = ConfigSelector()
 
     # Assert
-    # "New config", "config1.conf", "config2.disabled", "another.conf"
-    assert selector.grid_layout.count() == 4
+    filenames = [row.filename for row in selector.config_rows]
 
-    button_texts = []
-    for i in range(selector.grid_layout.count()):
-        item = selector.grid_layout.itemAt(i)
-        if item is not None:
-            widget = item.widget()
-            if isinstance(widget, QPushButton):
-                button_texts.append(widget.text())
+    assert selector.new_config_btn.text() == "+ New config"
+    assert filenames == ["another.conf", "config1.conf", "config2.disabled"]
+    assert "not_a_config.txt" not in filenames
 
-    assert "New config" in button_texts
-    assert "config1.conf" in button_texts
-    assert "config2.disabled" in button_texts
-    assert "another.conf" in button_texts
-    assert "not_a_config.txt" not in button_texts
+
+@patch("ui.config_selector.os.listdir", return_value=[])
+def test_config_selector_has_minimal_empty_state(_mock_listdir) -> None:
+    """An empty installation offers one primary creation action."""
+    selector = ConfigSelector()
+
+    assert not selector.config_rows
+    assert "No configurations yet" in selector.list_layout.itemAt(0).widget().text()
+    assert selector.new_config_btn.isEnabled() is True
