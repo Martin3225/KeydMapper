@@ -10,12 +10,23 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      KEYD_VERSION: v2.6.0
+      KEYD_COMMIT: 7c0aecb8bfd34dc8642bf4eefd2e59c89e61cec3
     steps:
       - uses: actions/checkout@v6
-      - name: Install Qt runtime
+      - name: Install system build and Qt runtime
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libegl1
+          sudo apt-get install --yes build-essential libegl1
+      - name: Build keyd syntax checker
+        run: |
+          git clone --depth 1 --branch "$KEYD_VERSION" \
+            https://github.com/rvaiya/keyd.git /tmp/keyd
+          test "$(git -C /tmp/keyd rev-parse HEAD)" = "$KEYD_COMMIT"
+          make --directory /tmp/keyd
+          echo "/tmp/keyd/bin" >> "$GITHUB_PATH"
+          /tmp/keyd/bin/keyd --version
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
