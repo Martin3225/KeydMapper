@@ -102,7 +102,7 @@ class LayoutEditor(BaseEditor):
                 item.update()
 
     def _on_key_recorded(self, key_name: str) -> None:
-        """Handles a key being recorded by the monitor."""
+        """Apply the next logical input emitted by the active keyd config."""
         self._name_input.setText(key_name)
         self._apply_key()
 
@@ -270,3 +270,9 @@ class LayoutEditor(BaseEditor):
             if isinstance(item, KeyItem)
         ]
         save_layout(Layout(device_id=self._device_id, buttons=buttons))
+
+    def shutdown(self) -> None:
+        """Stop input capture and detach the shared scene."""
+        self._record_btn.reset()
+        self._view.disconnect_signals()
+        super().shutdown()

@@ -162,15 +162,14 @@ class SetValueAction(ConfigActionWidget):
 
         layout.addLayout(mod_layout)
 
-        # Filter the privileged physical monitor to the device selected by the
-        # loaded config. This keeps recording useful while keyd owns the device.
-        self._recorder = KeyRecorder(
-            getattr(editor.config, "device_id", None),
-            parent=self,
-        )
+        self._recorder = KeyRecorder(parent=self)
         self._recorder.key_recorded.connect(self.on_key_recorded)
 
         self._record_btn = RecordButton(self._recorder)
+        self._record_btn.setToolTip(
+            "Capture the next key, shortcut, mouse button, or wheel action "
+            "emitted by the active keyd configuration."
+        )
         layout.addWidget(self._record_btn)
 
         self._reset_btn = QPushButton("Reset")
@@ -274,7 +273,7 @@ class SetValueAction(ConfigActionWidget):
         self._apply_key_value()
 
     def on_key_recorded(self, key_name: str) -> None:
-        """Handles a key being recorded by the monitor."""
+        """Apply a logical keyd-compatible input captured through Qt."""
         self._value_input.setText(key_name)
         self._apply_key_value()
 
@@ -282,3 +281,7 @@ class SetValueAction(ConfigActionWidget):
         """Resets the key mapping to an empty value."""
         self._value_input.setText("")
         self._apply_key_value()
+
+    def shutdown(self) -> None:
+        """Remove application-wide input capture before editor teardown."""
+        self._record_btn.reset()

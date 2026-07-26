@@ -30,6 +30,8 @@ class MainWindow(QMainWindow):
         while self._stacked.count() > 1:
             w = self._stacked.widget(self._stacked.count() - 1)
             if w is not None:
+                if isinstance(w, CombinedEditor):
+                    w.shutdown()
                 self._stacked.removeWidget(w)
                 w.deleteLater()
 
@@ -45,3 +47,12 @@ class MainWindow(QMainWindow):
         page.closed.connect(self.show_config_selector)
         self._stacked.addWidget(page)
         self._stacked.setCurrentWidget(page)
+
+    # pylint: disable=invalid-name
+    def closeEvent(self, event) -> None:
+        """Shut down editors before Qt deletes their shared C++ resources."""
+        for index in range(self._stacked.count()):
+            page = self._stacked.widget(index)
+            if isinstance(page, CombinedEditor):
+                page.shutdown()
+        super().closeEvent(event)

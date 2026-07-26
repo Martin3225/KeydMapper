@@ -37,9 +37,16 @@ class CombinedEditor(QWidget):
 
         self.config = Config(config_name, device_id)
         self.device_id = self.config.device_id
+        self._shutdown_done = False
 
         # Create Shared Scene and View
-        self.shared_scene = QGraphicsScene(0, 0, SCENE_WIDTH, SCENE_HEIGHT)
+        self.shared_scene = QGraphicsScene(
+            0,
+            0,
+            SCENE_WIDTH,
+            SCENE_HEIGHT,
+            self,
+        )
         self.shared_scene.setBackgroundBrush(QBrush(QColor("#1e1e1e")))
 
         self.shared_view = LayoutView(self.shared_scene)
@@ -70,3 +77,18 @@ class CombinedEditor(QWidget):
 
         # Center the view on the scene
         self.shared_view.centerOn(SCENE_WIDTH / 2, SCENE_HEIGHT / 2)
+
+    def shutdown(self) -> None:
+        """Detach both editors before the shared scene is destroyed."""
+        if self._shutdown_done:
+            return
+        self._shutdown_done = True
+        self.config_editor.shutdown()
+        self.layout_editor.shutdown()
+        self.shared_view.setScene(None)
+
+    # pylint: disable=invalid-name
+    def closeEvent(self, event) -> None:
+        """Run deterministic shared-resource teardown before closing."""
+        self.shutdown()
+        super().closeEvent(event)

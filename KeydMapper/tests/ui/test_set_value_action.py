@@ -3,6 +3,9 @@
 
 from unittest.mock import MagicMock
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
 from ui.actions.set_value import SetValueAction
 from ui.key_item import KeyItem
 
@@ -73,3 +76,25 @@ def test_set_value_action_validation_styling():
 
     # Assert
     assert action._value_input.styleSheet() == ""
+
+
+def test_set_value_recording_uses_active_keyd_output_without_password():
+    """The Binding recorder consumes Qt's virtual keyd output directly."""
+    mock_editor = MagicMock()
+    key = MagicMock(spec=KeyItem)
+    mock_editor.get_selected_key_item.return_value = key
+    action = SetValueAction(mock_editor)
+    action._record_btn.setEnabled(True)
+    action._value_input.setFocus()
+
+    action._record_btn.click()
+    QTest.keyClick(
+        action._value_input,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    QApplication.processEvents()
+
+    assert action._value_input.text() == "C-a"
+    mock_editor.set_key_mapping.assert_called_with(key, "C-a")
+    assert action._recorder.is_recording is False

@@ -17,7 +17,8 @@ def main() -> None:
 
     if not shutil.which("keyd"):
         print(
-            "The 'keyd' application was not found on your system. You won't be able to record keys or apply configurations."
+            "The 'keyd' application was not found on your system. "
+            "You won't be able to apply configurations."
         )
 
     # Initialize basic layouts
@@ -35,7 +36,7 @@ def main() -> None:
             window,
             "Missing keyd",
             "The 'keyd' application was not found on your system.\n\n"
-            "You won't be able to record keys or apply configurations.",
+            "You won't be able to apply configurations.",
         )
 
     window.show()

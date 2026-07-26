@@ -129,3 +129,8 @@ class ConfigEditor(
             self.cancel_requested.emit()
         except ConfigSaveError as error:
             QMessageBox.critical(self, "Error", str(error))
+
+    def shutdown(self) -> None:
+        """Stop editor-owned capture and detach the shared scene safely."""
+        self.set_value_action.shutdown()
+        super().shutdown()

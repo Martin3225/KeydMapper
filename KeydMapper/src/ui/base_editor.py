@@ -47,7 +47,9 @@ class BaseEditor(QWidget):
         # Scene and View (Stored but NOT added to layout yet)
         self._scene = context.scene
         self._view = context.view
+        self._context_attached = True
         self._scene.selectionChanged.connect(self._on_selection_changed)
+        self._scene.destroyed.connect(self._on_scene_destroyed)
 
         # Side Panel
         self.side_panel = QFrame()
@@ -90,13 +92,13 @@ class BaseEditor(QWidget):
     def activate_mode(self) -> None:
         """Called when this editor mode becomes active."""
 
-    def showEvent(self, event) -> None:
+    def showEvent(self, event) -> None:  # pylint: disable=invalid-name
         """Handles widget show events."""
         super().showEvent(event)
         self._view.viewport().update()
         self._overlay.raise_()
 
-    def eventFilter(self, obj, event) -> bool:
+    def eventFilter(self, obj, event) -> bool:  # pylint: disable=invalid-name
         """Filters events for the side panel overlay."""
         if obj == self.side_panel and event.type() == event.Type.Resize:
             self._overlay.resize(event.size())
@@ -113,5 +115,31 @@ class BaseEditor(QWidget):
 
     def get_selected_key_item(self) -> KeyItem | None:
         """Returns the currently selected KeyItem, if any."""
+        if not self._context_attached:
+            return None
         items = [i for i in self._scene.selectedItems() if isinstance(i, KeyItem)]
         return items[0] if items else None
+
+    def _on_scene_destroyed(self) -> None:
+        """Mark the context unusable before queued selection callbacks can run."""
+        self._context_attached = False
+
+    def shutdown(self) -> None:
+        """Disconnect shared Qt resources before their C++ objects are deleted."""
+        if not self._context_attached:
+            return
+        self._context_attached = False
+        try:
+            self._scene.selectionChanged.disconnect(self._on_selection_changed)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            self._scene.destroyed.disconnect(self._on_scene_destroyed)
+        except (RuntimeError, TypeError):
+            pass
+
+    # pylint: disable=invalid-name
+    def closeEvent(self, event) -> None:
+        """Detach shared resources before closing an independently owned editor."""
+        self.shutdown()
+        super().closeEvent(event)

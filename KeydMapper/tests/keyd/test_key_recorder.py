@@ -1,187 +1,170 @@
-"""Tests for KeyRecorder class that listens to keyboard inputs."""
+"""Tests for password-free logical input recording."""
 # pylint: disable=protected-access
 
 from unittest.mock import MagicMock, patch
 
 from keyd.key_recorder import KeyRecorder
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QKeyEvent, QMouseEvent, QWheelEvent
 
 
 def test_key_recorder_initialization():
-    """Test that KeyRecorder initializes with correct default states."""
+    """The recorder starts disarmed and no longer owns a root process."""
     recorder = KeyRecorder("1234:5678")
+
     assert recorder.is_recording is False
-    assert recorder._device_id == "1234:5678"
+    assert not hasattr(recorder, "_process")
 
 
 def test_key_recorder_start_stop():
-    """An unprivileged app asks Polkit to run only keyd monitor as root."""
-    # Arrange
+    """Capture is armed and disarmed through QApplication's event filter."""
     recorder = KeyRecorder()
-    with (
-        patch("keyd.key_recorder.QProcess") as mock_qprocess,
-        patch(
-            "keyd.key_recorder.shutil.which",
-            side_effect=lambda command: f"/usr/bin/{command}",
-        ),
-        patch("keyd.key_recorder.os.geteuid", return_value=1000),
-    ):
-        mock_process_instance = MagicMock()
-        mock_qprocess.return_value = mock_process_instance
 
-        # Act
-        recorder.start()
+    recorder.start()
+    assert recorder.is_recording is True
 
-        # Assert
-        assert recorder.is_recording is True
-        mock_qprocess.assert_called_once()
-        mock_process_instance.start.assert_called_once_with(
-            "/usr/bin/pkexec",
-            ["/usr/bin/keyd", "monitor"],
-        )
-        mock_process_instance.readyReadStandardOutput.connect.assert_called_once()
-        mock_process_instance.readyReadStandardError.connect.assert_called_once()
-        mock_process_instance.finished.connect.assert_called_once()
-
-        recorder.stop()
-
-        assert recorder.is_recording is False
-        mock_process_instance.kill.assert_called_once()
-        mock_process_instance.waitForFinished.assert_called_once_with(200)
+    recorder.stop()
+    assert recorder.is_recording is False
 
 
-def test_key_recorder_root_process_does_not_use_pkexec():
-    """A process that already has access starts keyd directly."""
-    recorder = KeyRecorder()
-    with (
-        patch("keyd.key_recorder.QProcess") as mock_qprocess,
-        patch("keyd.key_recorder.shutil.which", return_value="/usr/bin/keyd"),
-        patch("keyd.key_recorder.os.geteuid", return_value=0),
-    ):
-        recorder.start()
-
-    mock_qprocess.return_value.start.assert_called_once_with(
-        "/usr/bin/keyd",
-        ["monitor"],
-    )
-
-
-def test_key_recorder_reports_missing_polkit_without_starting():
-    """A missing authentication helper produces a useful UI error."""
+def test_key_recorder_reports_missing_qt_application():
+    """Starting outside a Qt application gives a useful error."""
     recorder = KeyRecorder()
     errors = MagicMock()
     recorder.error_occurred.connect(errors)
 
-    with (
-        patch(
-            "keyd.key_recorder.shutil.which",
-            side_effect=lambda command: (
-                "/usr/bin/keyd" if command == "keyd" else None
-            ),
-        ),
-        patch("keyd.key_recorder.os.geteuid", return_value=1000),
-        patch("keyd.key_recorder.QProcess") as mock_qprocess,
-    ):
+    with patch("keyd.key_recorder.QApplication.instance", return_value=None):
         recorder.start()
 
     assert recorder.is_recording is False
-    mock_qprocess.assert_not_called()
-    assert "pkexec" in errors.call_args.args[0]
+    assert "Qt application" in errors.call_args.args[0]
 
 
 def test_key_recorder_toggle():
-    """Test that toggle() switches the recording state."""
+    """toggle() switches the logical capture state."""
     recorder = KeyRecorder()
-    with (
-        patch.object(recorder, "start") as mock_start,
-        patch.object(recorder, "stop") as mock_stop,
-    ):
-        recorder._process = None  # not recording
-        recorder.toggle()
-        mock_start.assert_called_once()
-        mock_stop.assert_not_called()
 
-        mock_start.reset_mock()
-        recorder._process = MagicMock()  # recording
-        recorder.toggle()
-        mock_stop.assert_called_once()
-        mock_start.assert_not_called()
+    recorder.toggle()
+    assert recorder.is_recording is True
+
+    recorder.toggle()
+    assert recorder.is_recording is False
 
 
-def test_key_recorder_on_output():
-    """Test that _on_output() parses matching device output and stops recording."""
-    recorder = KeyRecorder("1111:2222")
-
-    # Emulate QByteArray return from readAllStandardOutput()
-    mock_byte_array = MagicMock()
-    mock_byte_array.toStdString.return_value = "1111:2222:3333\tenter\tdown\n"
-    mock_process = MagicMock()
-    mock_process.readAllStandardOutput.return_value = mock_byte_array
-
-    recorder._process = mock_process
-
-    mock_slot = MagicMock()
-    recorder.key_recorded.connect(mock_slot)
-
-    with patch.object(recorder, "stop") as mock_stop:
-        recorder._on_output()
-
-        mock_slot.assert_called_once_with("enter")
-        mock_stop.assert_called_once()
-
-
-def test_key_recorder_on_output_wrong_device():
-    """Test that _on_output() ignores output from unmonitored devices."""
-    recorder = KeyRecorder("1111:2222")
-
-    mock_process = MagicMock()
-    mock_byte_array = MagicMock()
-    mock_byte_array.toStdString.return_value = "3333:4444:5555\tspace\tdown\n"
-    mock_process.readAllStandardOutput.return_value = mock_byte_array
-    recorder._process = mock_process
-
-    mock_slot = MagicMock()
-    recorder.key_recorded.connect(mock_slot)
-
-    with patch.object(recorder, "stop") as mock_stop:
-        recorder._on_output()
-
-        mock_slot.assert_not_called()
-        mock_stop.assert_not_called()
-
-
-def test_key_recorder_matches_output_split_between_process_chunks():
-    """Partial QProcess reads do not lose the physical key event."""
-    recorder = KeyRecorder("1111:2222")
-    first = MagicMock()
-    first.toStdString.return_value = "1111:2222:3333\tspa"
-    second = MagicMock()
-    second.toStdString.return_value = "ce\tdown\n"
-    mock_process = MagicMock()
-    mock_process.readAllStandardOutput.side_effect = [first, second]
-    recorder._process = mock_process
+def test_key_recorder_captures_shortcut_and_consumes_event():
+    """Qt modifiers are emitted in keyd's compact shortcut syntax."""
+    recorder = KeyRecorder()
     recorded = MagicMock()
     recorder.key_recorded.connect(recorded)
+    recorder.start()
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.ShiftModifier,
+    )
 
-    with patch.object(recorder, "stop"):
-        recorder._on_output()
-        recorded.assert_not_called()
-        recorder._on_output()
+    consumed = recorder.eventFilter(recorder, event)
 
-    recorded.assert_called_once_with("space")
-
-
-def test_key_recorder_explains_cancelled_polkit_authentication():
-    """Cancelling the system password dialog is not shown as an unknown error."""
-    recorder = KeyRecorder()
-    recorder._process = MagicMock()
-    recorder._uses_polkit = True
-    stderr = MagicMock()
-    stderr.toStdString.return_value = ""
-    recorder._process.readAllStandardError.return_value = stderr
-    errors = MagicMock()
-    recorder.error_occurred.connect(errors)
-
-    recorder._on_finished(126, MagicMock())
-
+    assert consumed is True
     assert recorder.is_recording is False
-    assert "denied" in errors.call_args.args[0]
+    recorded.assert_called_once_with("C-S-a")
+
+
+def test_key_recorder_ignores_key_auto_repeat():
+    """Holding a key cannot accidentally complete a newly armed capture."""
+    recorder = KeyRecorder()
+    recorded = MagicMock()
+    recorder.key_recorded.connect(recorded)
+    recorder.start()
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.NoModifier,
+        "",
+        True,
+        2,
+    )
+
+    assert recorder.eventFilter(recorder, event) is False
+    assert recorder.is_recording is True
+    recorded.assert_not_called()
+    recorder.stop()
+
+
+def test_key_recorder_captures_virtual_mouse_output():
+    """Mouse events need no physical id such as the Razer device id."""
+    recorder = KeyRecorder("1532:0099")
+    recorded = MagicMock()
+    recorder.key_recorded.connect(recorded)
+    recorder.start()
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(10, 10),
+        QPointF(10, 10),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    assert recorder.eventFilter(recorder, event) is True
+    recorded.assert_called_once_with("leftmouse")
+
+
+def test_key_recorder_maps_additional_mouse_buttons():
+    """Qt back/forward and extra buttons have keyd-compatible names."""
+    assert KeyRecorder._mouse_name(Qt.MouseButton.BackButton) == "mouseback"
+    assert KeyRecorder._mouse_name(Qt.MouseButton.ForwardButton) == "mouseforward"
+    assert KeyRecorder._mouse_name(Qt.MouseButton.TaskButton) == "mouse1"
+    assert KeyRecorder._mouse_name(Qt.MouseButton.ExtraButton4) == "mouse2"
+
+
+def test_key_recorder_captures_wheel_direction():
+    """Wheel events become keyd's scroll actions."""
+    recorder = KeyRecorder()
+    recorded = MagicMock()
+    recorder.key_recorded.connect(recorded)
+    recorder.start()
+    event = QWheelEvent(
+        QPointF(10, 10),
+        QPointF(10, 10),
+        QPoint(),
+        QPoint(0, -120),
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+        Qt.ScrollPhase.ScrollUpdate,
+        False,
+    )
+
+    assert recorder.eventFilter(recorder, event) is True
+    recorded.assert_called_once_with("scrolldown")
+
+
+def test_key_recorder_maps_keypad_and_function_keys():
+    """Non-letter keys retain their distinct keyd names."""
+    keypad = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_1,
+        Qt.KeyboardModifier.KeypadModifier,
+    )
+    function = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_F12,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+    assert KeyRecorder._key_expression(keypad) == "kp1"
+    assert KeyRecorder._key_expression(function) == "f12"
+
+
+def test_altgr_does_not_duplicate_qt_control_and_alt_flags():
+    """Qt's Ctrl+Alt implementation detail is normalized to keyd's G prefix."""
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_A,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.AltModifier
+        | Qt.KeyboardModifier.GroupSwitchModifier,
+    )
+
+    assert KeyRecorder._key_expression(event) == "G-a"
