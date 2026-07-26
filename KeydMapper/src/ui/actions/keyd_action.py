@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from keyd.actions import (
     ACTION_BY_NAME,
-    ACTION_SPECS,
     ActionField,
     ActionFieldKind,
     action_completions,
@@ -51,19 +50,12 @@ class KeydActionEditor(ConfigActionWidget):
     def __init__(self, editor: "ConfigEditor"):
         super().__init__(editor)
         self._loading = False
+        self._current_action_name = next(iter(ACTION_BY_NAME))
         self._field_widgets: dict[str, QWidget] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        self._action_selector = QComboBox()
-        for spec in ACTION_SPECS:
-            self._action_selector.addItem(spec.label, spec.keyd_function)
-        self._action_selector.currentIndexChanged.connect(
-            self._on_action_changed
-        )
-        layout.addWidget(self._action_selector)
 
         self._description = QLabel()
         self._description.setWordWrap(True)
@@ -107,7 +99,7 @@ class KeydActionEditor(ConfigActionWidget):
     @property
     def current_action_name(self) -> str:
         """Return the normalized keyd action selected in the form."""
-        return str(self._action_selector.currentData())
+        return self._current_action_name
 
     def on_selection_changed(self, key_item: KeyItem | None) -> None:
         """Load a selected binding without writing anything back."""
@@ -126,8 +118,7 @@ class KeydActionEditor(ConfigActionWidget):
                 self._clear_form()
                 return
 
-            index = self._action_selector.findData(parsed.action_name)
-            self._action_selector.setCurrentIndex(index)
+            self._current_action_name = parsed.action_name
             self._rebuild_fields()
             spec = ACTION_BY_NAME[parsed.action_name]
             for field, value in zip(spec.fields, parsed.arguments):
@@ -145,12 +136,20 @@ class KeydActionEditor(ConfigActionWidget):
         _ = layer
         self.on_selection_changed(self.editor.get_selected_key_item())
 
-    def _on_action_changed(self) -> None:
-        """Rebuild the normalized action form."""
+    def select_action(self, action_name: str) -> None:
+        """Switch the form to an action chosen by the shared Binding dropdown."""
+        if action_name not in ACTION_BY_NAME:
+            raise ValueError(f"Unknown keyd action: {action_name}")
         if self._loading:
             return
+        key_item = self.editor.get_selected_key_item()
+        self.setEnabled(key_item is not None)
+        self._reset_button.setEnabled(
+            key_item is not None and bool(key_item.key_value)
+        )
         self._loading = True
         try:
+            self._current_action_name = action_name
             self._rebuild_fields()
             self._macro_checkbox.setChecked(False)
             self._macro_input.clear()

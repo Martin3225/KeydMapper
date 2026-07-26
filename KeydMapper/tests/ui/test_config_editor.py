@@ -3,6 +3,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from keyd.actions import ACTION_SPECS, ActionCategory
 from keyd.config import Config
 from keyd.layout import Layout
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -274,6 +275,21 @@ def test_config_editor_features_live_in_focused_modules():
     )
 
 
+def test_binding_uses_one_grouped_action_dropdown():
+    """Literal input and every visual action share one grouped selector."""
+    editor, _, _ = _create_live_editor_with_selected_key()
+
+    assert editor._action_selector.itemText(0) == "Key / shortcut"
+    assert editor._action_selector.itemData(0) == "literal"
+    assert not hasattr(editor.keyd_action, "_action_selector")
+    for category in ActionCategory:
+        assert editor._action_selector.findText(category.value) >= 0
+    for spec in ACTION_SPECS:
+        assert (
+            editor._action_selector.findData(spec.keyd_function) >= 0
+        )
+
+
 def test_editor_panels_have_no_artificial_resize_limits():
     """Both horizontal rails and the vertical inspector may be dragged freely."""
     editor, _, _ = _create_live_editor_with_selected_key()
@@ -444,7 +460,7 @@ def test_keyd_action_is_loaded_as_normalized_visual_form():
 
     editor._on_selection_changed()
 
-    assert editor._action_selector.currentText() == "Keyd action"
+    assert editor._action_selector.currentText() == "Hold layer"
     assert editor.keyd_action.current_action_name == "layer"
     assert editor.keyd_action._macro_checkbox.isChecked() is True
     assert editor.keyd_action._macro_input.text() == "macro(C-a)"
@@ -455,11 +471,10 @@ def test_visual_keyd_action_immediately_updates_generated_config():
     editor, config, key = _create_live_editor_with_selected_key()
     config.add_layer("nav")
     editor.on_config_structure_changed()
-    editor._action_selector.setCurrentIndex(1)
-    action = editor.keyd_action
-    action._action_selector.setCurrentIndex(
-        action._action_selector.findData("toggle")
+    editor._action_selector.setCurrentIndex(
+        editor._action_selector.findData("toggle")
     )
+    action = editor.keyd_action
     action._field_widgets["layer"].setCurrentText("nav")
     action._macro_checkbox.setChecked(True)
     action._macro_input.setText("macro(C-a)")
@@ -468,6 +483,22 @@ def test_visual_keyd_action_immediately_updates_generated_config():
 
     assert key.key_value == "togglem(nav, macro(C-a))"
     assert "a = togglem(nav, macro(C-a))" in editor.source_editor.toPlainText()
+
+
+def test_single_dropdown_can_switch_between_structured_actions():
+    """Choosing a new incomplete form must keep the old binding until completed."""
+    editor, _, key = _create_live_editor_with_selected_key()
+    editor.set_key_mapping(key, "toggle(nav)")
+    editor._on_selection_changed()
+
+    editor._action_selector.setCurrentIndex(
+        editor._action_selector.findData("overload")
+    )
+
+    assert editor.keyd_action.isEnabled() is True
+    assert editor.keyd_action.current_action_name == "overload"
+    assert key.key_value == "toggle(nav)"
+    assert set(editor.keyd_action._field_widgets) == {"layer", "action"}
 
 
 def test_layer_rail_changes_the_active_visual_layer():

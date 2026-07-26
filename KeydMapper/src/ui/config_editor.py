@@ -6,7 +6,7 @@ from keyd.actions import parse_action
 from keyd.config import Config, ConfigSaveError
 from PySide6.QtWidgets import QGraphicsScene, QMessageBox
 from ui.base_editor import BaseEditor
-from ui.config_editor_bindings import ConfigBindingsMixin
+from ui.config_editor_bindings import LITERAL_BINDING, ConfigBindingsMixin
 from ui.config_editor_history import ConfigHistoryMixin
 from ui.config_editor_layout import PhysicalLayoutMixin
 from ui.config_editor_source import ConfigSourceMixin
@@ -83,13 +83,14 @@ class ConfigEditor(
 
     def _select_binding_editor_for(self, key: KeyItem | None) -> None:
         """Choose structured actions for parsed keyd calls, literal input otherwise."""
-        desired_mode = 1 if key and parse_action(key.key_value) else 0
-        if self._action_selector.currentIndex() == desired_mode:
-            return
-        self._action_selector.blockSignals(True)
-        self._action_selector.setCurrentIndex(desired_mode)
-        self._action_selector.blockSignals(False)
-        self._action_stack.setCurrentIndex(desired_mode)
+        parsed = parse_action(key.key_value) if key else None
+        action_name = parsed.action_name if parsed else LITERAL_BINDING
+        desired_index = self._action_selector.findData(action_name)
+        if self._action_selector.currentIndex() != desired_index:
+            self._action_selector.blockSignals(True)
+            self._action_selector.setCurrentIndex(desired_index)
+            self._action_selector.blockSignals(False)
+        self._action_stack.setCurrentIndex(1 if parsed else 0)
 
     def _save(self) -> None:
         """Save the active physical layout or validated keyd configuration."""

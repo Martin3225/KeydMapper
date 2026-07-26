@@ -18,6 +18,15 @@ class ActionFieldKind(str, Enum):
     SHELL_COMMAND = "shell_command"
 
 
+class ActionCategory(str, Enum):
+    """Visual groups used by the single Binding action selector."""
+
+    SEQUENCES = "Macros & repeat"
+    LAYERS = "Layers"
+    TAP_HOLD = "Tap & hold"
+    SYSTEM = "System"
+
+
 @dataclass(frozen=True)
 class ActionField:
     """One documented argument of a keyd function.
@@ -39,6 +48,7 @@ class ActionSpec:
 
     keyd_function: str
     label: str
+    category: ActionCategory
     fields: tuple[ActionField, ...]
     help_text: str
     macro_function: str | None = None
@@ -133,12 +143,14 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="macro",
         label="Macro",
+        category=ActionCategory.SEQUENCES,
         fields=(MACRO_BODY_ARGUMENT,),
         help_text="Press a sequence of keys.",
     ),
     ActionSpec(
         keyd_function="layer",
         label="Hold layer",
+        category=ActionCategory.LAYERS,
         fields=(LAYER_ARGUMENT,),
         help_text="Activate a layer while this key is held.",
         macro_function="layerm",
@@ -146,6 +158,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="oneshot",
         label="One-shot layer",
+        category=ActionCategory.LAYERS,
         fields=(LAYER_ARGUMENT,),
         help_text="Apply a layer to the next key press.",
         macro_function="oneshotm",
@@ -154,6 +167,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="swap",
         label="Swap layer",
+        category=ActionCategory.LAYERS,
         fields=(LAYER_ARGUMENT,),
         help_text="Replace the currently active layer.",
         macro_function="swapm",
@@ -161,6 +175,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="toggle",
         label="Toggle layer",
+        category=ActionCategory.LAYERS,
         fields=(LAYER_ARGUMENT,),
         help_text="Toggle a layer on or off.",
         macro_function="togglem",
@@ -168,12 +183,14 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="setlayout",
         label="Set layout",
+        category=ActionCategory.LAYERS,
         fields=(LAYOUT_ARGUMENT,),
         help_text="Switch to a layout and clear the active layers.",
     ),
     ActionSpec(
         keyd_function="clear",
         label="Clear active layers",
+        category=ActionCategory.LAYERS,
         fields=(),
         help_text="Clear every active layer.",
         macro_function="clearm",
@@ -181,30 +198,35 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="repeat",
         label="Repeat last action",
+        category=ActionCategory.SEQUENCES,
         fields=(),
         help_text="Repeat the last executed action.",
     ),
     ActionSpec(
         keyd_function="overload",
         label="Tap or hold",
+        category=ActionCategory.TAP_HOLD,
         fields=(LAYER_ARGUMENT, ACTION_ARGUMENT),
         help_text="Use a layer while held and execute an action when tapped.",
     ),
     ActionSpec(
         keyd_function="overloadt",
         label="Tap or hold after timeout",
+        category=ActionCategory.TAP_HOLD,
         fields=(LAYER_ARGUMENT, ACTION_ARGUMENT, TIMEOUT_ARGUMENT),
         help_text="Resolve a tap after a fixed timeout.",
     ),
     ActionSpec(
         keyd_function="overloadt2",
         label="Permissive tap or hold",
+        category=ActionCategory.TAP_HOLD,
         fields=(LAYER_ARGUMENT, ACTION_ARGUMENT, TIMEOUT_ARGUMENT),
         help_text="Prefer the hold action when another key is pressed.",
     ),
     ActionSpec(
         keyd_function="overloadi",
         label="Idle-sensitive action",
+        category=ActionCategory.TAP_HOLD,
         fields=(
             ACTION_ARGUMENT,
             FALLBACK_ACTION_ARGUMENT,
@@ -217,6 +239,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="lettermod",
         label="Letter modifier",
+        category=ActionCategory.TAP_HOLD,
         fields=(
             LAYER_ARGUMENT,
             KEY_ARGUMENT,
@@ -228,6 +251,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="timeout",
         label="Timeout action",
+        category=ActionCategory.TAP_HOLD,
         fields=(
             ACTION_ARGUMENT,
             TIMEOUT_ARGUMENT,
@@ -238,6 +262,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="macro2",
         label="Timed macro",
+        category=ActionCategory.SEQUENCES,
         fields=(
             TIMEOUT_ARGUMENT,
             REPEAT_TIMEOUT_ARGUMENT,
@@ -248,12 +273,14 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     ActionSpec(
         keyd_function="command",
         label="Run command",
+        category=ActionCategory.SYSTEM,
         fields=(SHELL_COMMAND_ARGUMENT,),
         help_text="Execute a shell command asynchronously.",
     ),
     ActionSpec(
         keyd_function="noop",
         label="Do nothing",
+        category=ActionCategory.SYSTEM,
         fields=(),
         help_text="Ignore the key.",
     ),

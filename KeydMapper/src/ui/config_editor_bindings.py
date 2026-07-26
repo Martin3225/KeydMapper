@@ -2,8 +2,10 @@
 
 from typing import cast
 
+from keyd.actions import ACTION_SPECS, ActionCategory
 from keyd.config import ConfigSaveError
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -25,6 +27,8 @@ from ui.key_item import KeyItem
 
 # This feature mixin is composed into ConfigEditor and shares its editor shell.
 # pylint: disable=no-member,too-many-instance-attributes
+
+LITERAL_BINDING = "literal"
 
 
 class ConfigBindingsMixin:
@@ -128,10 +132,7 @@ class ConfigBindingsMixin:
         layout.addWidget(QLabel("Action:"))
 
         self._action_selector = QComboBox()
-        self._action_selector.addItems(["Key or shortcut", "Keyd action"])
-        self._action_selector.currentIndexChanged.connect(
-            self._on_action_mode_changed
-        )
+        self._populate_action_selector()
         layout.addWidget(self._action_selector)
 
         self._action_stack = QStackedWidget()
@@ -139,9 +140,36 @@ class ConfigBindingsMixin:
         self.keyd_action = KeydActionEditor(self)
         self._action_stack.addWidget(self.set_value_action)
         self._action_stack.addWidget(self.keyd_action)
+        self._action_selector.currentIndexChanged.connect(
+            self._on_action_selected
+        )
         layout.addWidget(self._action_stack)
         layout.addStretch()
         self.inspector_splitter.addWidget(self.actions_page)
+
+    def _populate_action_selector(self) -> None:
+        """Add literal input first, followed by labelled action groups."""
+        self._action_selector.addItem("Key / shortcut", LITERAL_BINDING)
+        model = cast(QStandardItemModel, self._action_selector.model())
+
+        for category in ActionCategory:
+            self._action_selector.insertSeparator(
+                self._action_selector.count()
+            )
+            header_index = self._action_selector.count()
+            self._action_selector.addItem(category.value)
+            header = model.item(header_index)
+            header.setEnabled(False)
+            font = header.font()
+            font.setBold(True)
+            header.setFont(font)
+
+            for spec in ACTION_SPECS:
+                if spec.category is category:
+                    self._action_selector.addItem(
+                        spec.label,
+                        spec.keyd_function,
+                    )
 
     def attach_view(self) -> None:
         """Place the shared keyboard view between navigation and inspector."""
@@ -211,10 +239,19 @@ class ConfigBindingsMixin:
         self.on_config_structure_changed()
         self._on_layer_changed(name)
 
-    def _on_action_mode_changed(self, index: int) -> None:
-        """Switch between a literal key and structured keyd actions."""
-        self._action_stack.setCurrentIndex(index)
-        self._active_action.on_selection_changed(self.get_selected_key_item())
+    def _on_action_selected(self, index: int) -> None:
+        """Open the literal editor or selected structured action form."""
+        action_name = self._action_selector.itemData(index)
+        if not action_name:
+            return
+        if action_name == LITERAL_BINDING:
+            self._action_stack.setCurrentIndex(0)
+            self._active_action.on_selection_changed(
+                self.get_selected_key_item()
+            )
+        else:
+            self._action_stack.setCurrentIndex(1)
+            self.keyd_action.select_action(str(action_name))
 
     def _on_layer_changed(self, layer: str) -> None:
         """Update the keyboard and inspectors for the active layer."""

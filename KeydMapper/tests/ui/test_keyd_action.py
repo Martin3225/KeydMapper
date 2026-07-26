@@ -4,6 +4,7 @@
 
 from unittest.mock import MagicMock
 
+from keyd.actions import ACTION_BY_NAME
 from PySide6.QtWidgets import QComboBox, QLineEdit, QSpinBox
 from ui.actions.keyd_action import KeydActionEditor
 from ui.key_item import KeyItem
@@ -22,9 +23,7 @@ def _create_action(value: str = "") -> tuple[KeydActionEditor, MagicMock, MagicM
 
 
 def _select_action(action: KeydActionEditor, action_id: str) -> None:
-    index = action._action_selector.findData(action_id)
-    assert index >= 0
-    action._action_selector.setCurrentIndex(index)
+    action.select_action(action_id)
 
 
 def _set_field(action: KeydActionEditor, name: str, value: str) -> None:
@@ -52,7 +51,7 @@ def test_layer_action_can_run_macro_without_exposing_layerm():
     editor.set_key_mapping.assert_called_with(
         key, "layerm(nav, macro(C-a C-c))"
     )
-    assert action._action_selector.findData("layerm") == -1
+    assert "layerm" not in ACTION_BY_NAME
 
 
 def test_oneshot_additional_behaviours_are_mutually_exclusive():
