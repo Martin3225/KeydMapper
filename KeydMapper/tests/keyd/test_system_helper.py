@@ -6,8 +6,9 @@ from collections.abc import Iterator
 import importlib.util
 import json
 from pathlib import Path
+import threading
 from types import ModuleType
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 from xml.etree import ElementTree
 
 import pytest
@@ -111,6 +112,49 @@ def test_client_reuses_pinned_helper_and_sends_json_over_stdin():
         },
     ]
     process.stdin.close.assert_called_once()
+
+
+def test_client_records_physical_shortcut_through_session():
+    """Recording reuses the authenticated helper and sends a bounded request."""
+    process = _fake_session_process(
+        '{"ready":true}\n',
+        '{"recording":true}\n',
+        '{"ok":true,"key":"C-a"}\n',
+    )
+    session = system_helper._SystemHelperSession()
+    with (
+        patch("keyd.system_helper.helper_installation_issue", return_value=None),
+        patch("keyd.system_helper.os.geteuid", return_value=0),
+        patch("keyd.system_helper.subprocess.Popen", return_value=process),
+        patch.object(system_helper, "_SESSION", session),
+    ):
+        key = system_helper.record_key(
+            "k:1234:5678",
+            capture_shortcut=True,
+            cancel_event=threading.Event(),
+        )
+        session.close()
+
+    assert key == "C-a"
+    request = json.loads(process.stdin.write.call_args_list[0].args[0])
+    assert request == {
+        "operation": "record",
+        "device_id": "k:1234:5678",
+        "capture_shortcut": True,
+    }
+
+
+def test_client_sends_recording_cancellation_frame():
+    """The UI can stop monitor capture without waiting for its timeout."""
+    process = _fake_session_process()
+    session = system_helper._SystemHelperSession()
+    session._process = process
+    session._record_active = True
+
+    session.cancel_recording()
+
+    request = json.loads(process.stdin.write.call_args.args[0])
+    assert request == {"operation": "cancel_record"}
 
 
 def test_client_refuses_uninstalled_or_user_writable_helper():
@@ -289,6 +333,195 @@ def test_privileged_apply_is_atomic_and_uses_fixed_commands(
         "/usr/bin/systemctl",
         "restart",
         "keyd.service",
+    ]
+
+
+def _fake_monitor(*lines: str) -> MagicMock:
+    monitor = MagicMock()
+    monitor.poll.return_value = None
+    monitor.wait.return_value = 0
+    monitor.stdout.readline.side_effect = lines
+    return monitor
+
+
+def test_physical_monitor_pauses_and_restores_active_keyd(
+    privileged_helper: ModuleType,
+):
+    """Original key capture brackets keyd monitor with service stop/start."""
+    monitor = _fake_monitor(
+        "USB Keyboard\t1234:5678:a1b2c3d4\tleftcontrol down\n",
+        "USB Keyboard\t1234:5678:a1b2c3d4\ta down\n",
+        "USB Keyboard\t1234:5678:a1b2c3d4\ta up\n",
+        "USB Keyboard\t1234:5678:a1b2c3d4\tleftcontrol up\n",
+    )
+    privileged_helper._check_system_paths = MagicMock()
+    privileged_helper._keyd_service_is_active = MagicMock(return_value=True)
+    privileged_helper._run_checked = MagicMock()
+    with (
+        patch.object(
+            privileged_helper.subprocess,
+            "Popen",
+            return_value=monitor,
+        ),
+        patch.object(
+            privileged_helper.select,
+            "select",
+            side_effect=[
+                ([monitor.stdout], [], []),
+                ([monitor.stdout], [], []),
+                ([monitor.stdout], [], []),
+                ([monitor.stdout], [], []),
+            ],
+        ),
+    ):
+        response, parent_closed = privileged_helper._record_original_input(
+            "1234:5678",
+            True,
+        )
+
+    assert response == {"ok": True, "key": "C-a"}
+    assert parent_closed is False
+    assert privileged_helper._run_checked.call_args_list == [
+        call(
+            ["/usr/bin/systemctl", "stop", "keyd.service"],
+            "stopping keyd for physical input recording",
+        ),
+        call(
+            ["/usr/bin/systemctl", "start", "keyd.service"],
+            "restoring keyd after physical input recording",
+        ),
+    ]
+    monitor.terminate.assert_called_once()
+
+
+def test_layout_capture_returns_first_physical_modifier(
+    privileged_helper: ModuleType,
+):
+    """Layout recording preserves left/right physical modifier identity."""
+    monitor = _fake_monitor(
+        "USB Keyboard\t1234:5678:a1b2c3d4\trightshift down\n",
+        "USB Keyboard\t1234:5678:a1b2c3d4\trightshift up\n",
+    )
+    privileged_helper._check_system_paths = MagicMock()
+    privileged_helper._keyd_service_is_active = MagicMock(return_value=False)
+    with (
+        patch.object(
+            privileged_helper.subprocess,
+            "Popen",
+            return_value=monitor,
+        ),
+        patch.object(
+            privileged_helper.select,
+            "select",
+            side_effect=[
+                ([monitor.stdout], [], []),
+                ([monitor.stdout], [], []),
+            ],
+        ),
+    ):
+        response, _ = privileged_helper._record_original_input(
+            "k:1234:5678",
+            False,
+        )
+
+    assert response == {"ok": True, "key": "rightshift"}
+
+
+def test_physical_monitor_filters_other_devices(
+    privileged_helper: ModuleType,
+):
+    """A recorder for one layout ignores events from other keyboards."""
+    monitor = _fake_monitor(
+        "Other Keyboard\t9999:0001:eeeeeeee\tx down\n",
+        "Wanted Keyboard\t1234:5678:a1b2c3d4\tenter down\n",
+        "Wanted Keyboard\t1234:5678:a1b2c3d4\tenter up\n",
+    )
+    privileged_helper._check_system_paths = MagicMock()
+    privileged_helper._keyd_service_is_active = MagicMock(return_value=False)
+    with (
+        patch.object(
+            privileged_helper.subprocess,
+            "Popen",
+            return_value=monitor,
+        ),
+        patch.object(
+            privileged_helper.select,
+            "select",
+            side_effect=[
+                ([monitor.stdout], [], []),
+                ([monitor.stdout], [], []),
+                ([monitor.stdout], [], []),
+            ],
+        ),
+    ):
+        response, _ = privileged_helper._record_original_input(
+            "1234:5678",
+            False,
+        )
+
+    assert response == {"ok": True, "key": "enter"}
+
+
+def test_cancelled_monitor_still_restores_keyd(
+    privileged_helper: ModuleType,
+):
+    """Stop requests terminate capture and restore the prior daemon state."""
+    monitor = _fake_monitor()
+    privileged_helper._check_system_paths = MagicMock()
+    privileged_helper._keyd_service_is_active = MagicMock(return_value=True)
+    privileged_helper._run_checked = MagicMock()
+    privileged_helper._read_cancel_request = MagicMock(return_value=True)
+    with (
+        patch.object(
+            privileged_helper.subprocess,
+            "Popen",
+            return_value=monitor,
+        ),
+        patch.object(
+            privileged_helper.select,
+            "select",
+            return_value=([privileged_helper.sys.stdin], [], []),
+        ),
+    ):
+        response, parent_closed = privileged_helper._record_original_input(
+            None,
+            False,
+        )
+
+    assert response == {"ok": True, "cancelled": True}
+    assert parent_closed is False
+    assert privileged_helper._run_checked.call_args_list[-1] == call(
+        ["/usr/bin/systemctl", "start", "keyd.service"],
+        "restoring keyd after physical input recording",
+    )
+
+
+def test_monitor_start_failure_still_restores_keyd(
+    privileged_helper: ModuleType,
+):
+    """A failed keyd monitor launch cannot leave the daemon stopped."""
+    privileged_helper._check_system_paths = MagicMock()
+    privileged_helper._keyd_service_is_active = MagicMock(return_value=True)
+    privileged_helper._run_checked = MagicMock()
+    with (
+        patch.object(
+            privileged_helper.subprocess,
+            "Popen",
+            side_effect=OSError("monitor failed"),
+        ),
+        pytest.raises(OSError, match="monitor failed"),
+    ):
+        privileged_helper._record_original_input(None, False)
+
+    assert privileged_helper._run_checked.call_args_list == [
+        call(
+            ["/usr/bin/systemctl", "stop", "keyd.service"],
+            "stopping keyd for physical input recording",
+        ),
+        call(
+            ["/usr/bin/systemctl", "start", "keyd.service"],
+            "restoring keyd after physical input recording",
+        ),
     ]
 
 

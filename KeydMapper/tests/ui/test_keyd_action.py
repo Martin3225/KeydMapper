@@ -4,8 +4,8 @@
 
 from unittest.mock import MagicMock
 
-from keyd.actions import ACTION_BY_NAME
-from PySide6.QtWidgets import QComboBox, QLineEdit, QSpinBox
+from keyd.actions import ACTION_BY_NAME, ActionFieldKind
+from PySide6.QtWidgets import QApplication, QComboBox, QLineEdit, QSpinBox
 from ui.actions.keyd_action import KeydActionEditor
 from ui.key_item import KeyItem
 
@@ -97,6 +97,27 @@ def test_existing_nested_action_populates_each_documented_field():
     )
 
 
+def test_action_field_completion_updates_generated_binding() -> None:
+    """Completer activation applies its final text, not the typed prefix."""
+    action, editor, key = _create_action()
+    _select_action(action, "overload")
+    _set_field(action, "layer", "nav")
+    target = action._field_widgets["action"]
+    assert isinstance(target, QLineEdit)
+    target.setText("del")
+    action._apply()
+    editor.set_key_mapping.reset_mock()
+
+    target.setText("delete")
+    target.completer().activated.emit("delete")
+    QApplication.processEvents()
+
+    editor.set_key_mapping.assert_called_once_with(
+        key,
+        "overload(nav, delete)",
+    )
+
+
 def test_incomplete_action_form_does_not_overwrite_binding():
     """Choosing an action waits for every required argument."""
     action, editor, _ = _create_action("right")
@@ -124,3 +145,98 @@ def test_layer_options_use_base_names_and_allow_custom_layout_names():
     assert widget.findText("shift") >= 0
     assert widget.findText("shift:C") == -1
     assert widget.isEditable() is True
+
+
+def _record_button_for(
+    action: KeydActionEditor,
+    target: QLineEdit,
+):
+    """Find the shared-recorder button paired with one line edit."""
+    return next(
+        button
+        for button, (line_edit, _) in action._record_buttons.items()
+        if line_edit is target
+    )
+
+
+def test_action_expression_field_can_record_physical_shortcut():
+    """Tap/hold actions expose recording beside their nested action field."""
+    action, editor, key = _create_action()
+    _select_action(action, "overload")
+    _set_field(action, "layer", "nav")
+    target = action._field_widgets["action"]
+    assert isinstance(target, QLineEdit)
+    button = _record_button_for(action, target)
+    action._record_target = (
+        target,
+        ActionFieldKind.ACTION_EXPRESSION,
+        button,
+    )
+
+    action._on_recorded_input("C-a")
+
+    assert target.text() == "C-a"
+    editor.set_key_mapping.assert_called_with(key, "overload(nav, C-a)")
+
+
+def test_macro_recording_appends_a_sequence_instead_of_replacing_it():
+    """Repeated captures build the macro body in keyd sequence order."""
+    action, editor, key = _create_action()
+    _select_action(action, "macro")
+    target = action._field_widgets["macro"]
+    assert isinstance(target, QLineEdit)
+    button = _record_button_for(action, target)
+
+    for recorded in ("C-a", "C-c"):
+        action._record_target = (
+            target,
+            ActionFieldKind.MACRO_BODY,
+            button,
+        )
+        action._on_recorded_input(recorded)
+
+    assert target.text() == "C-a C-c"
+    editor.set_key_mapping.assert_called_with(key, "macro(C-a C-c)")
+
+
+def test_parallel_macro_recording_preserves_macro_wrapper():
+    """The optional macro field appends inside its macro(...) expression."""
+    action, editor, key = _create_action()
+    _select_action(action, "layer")
+    _set_field(action, "layer", "nav")
+    action._macro_checkbox.setChecked(True)
+    button = _record_button_for(action, action._macro_input)
+
+    for recorded in ("C-a", "C-c"):
+        action._record_target = (
+            action._macro_input,
+            ActionFieldKind.MACRO_EXPRESSION,
+            button,
+        )
+        action._on_recorded_input(recorded)
+
+    assert action._macro_input.text() == "macro(C-a C-c)"
+    editor.set_key_mapping.assert_called_with(
+        key,
+        "layerm(nav, macro(C-a C-c))",
+    )
+
+
+def test_every_key_action_or_macro_line_edit_has_record_button():
+    """All semantically recordable generated fields expose the same control."""
+    action, _, _ = _create_action()
+    recordable_kinds = {
+        ActionFieldKind.KEY_SEQUENCE,
+        ActionFieldKind.ACTION_EXPRESSION,
+        ActionFieldKind.MACRO_BODY,
+        ActionFieldKind.MACRO_EXPRESSION,
+    }
+
+    for action_name, spec in ACTION_BY_NAME.items():
+        _select_action(action, action_name)
+        for field in spec.fields:
+            if field.input_kind not in recordable_kinds:
+                continue
+            target = action._field_widgets[field.argument_id]
+            assert isinstance(target, QLineEdit)
+            assert _record_button_for(action, target).text() == "Record"

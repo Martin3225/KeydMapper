@@ -216,6 +216,74 @@ macro_timeout = 700
     assert "macro_timeout = 700" in rendered
 
 
+def test_new_binding_stays_before_section_trailing_whitespace():
+    """Structural formatting keeps blank separators after inserted bindings."""
+    sample_content = (
+        "[ids]\r\n"
+        "1234:5678\r\n"
+        "\r\n"
+        "[main]\r\n"
+        "    a    =    b\r\n"
+        "   \r\n"
+        "\r\n"
+        "[nav]\r\n"
+        "h = left\r\n"
+    )
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open(read_data=sample_content)),
+        patch("keyd.config.get_device_id_from_config", return_value="1234:5678"),
+    ):
+        config = Config("format-insert.conf")
+
+    config.set_mapping("main", "j", "down")
+    rendered = config.source()
+
+    assert (
+        "    a    =    b\r\n"
+        "    j    =    down\r\n"
+        "\r\n"
+        "[nav]"
+    ) in rendered
+    assert "   \r\n" not in rendered
+
+
+def test_structural_format_removes_binding_gaps_and_collapses_section_gap():
+    """Generated source keeps bindings together and one line between sections."""
+    sample_content = """[ids]
+*
+
+[main]
+volumeup = noop
+
+playpause = M-3
+
+
+[RightShift:S]
+rightshift = M-5
+[NoGap]
+"""
+    with (
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open(read_data=sample_content)),
+        patch("keyd.config.get_device_id_from_config", return_value="*"),
+    ):
+        config = Config("section-format.conf")
+
+    assert config.source() == """[ids]
+*
+
+[main]
+volumeup = noop
+playpause = M-3
+
+[RightShift:S]
+rightshift = M-5
+
+[NoGap]
+"""
+
+
 def test_rename_layer_preserves_comments_and_updates_action_references():
     """Renaming a layer patches headers and nested references losslessly."""
     sample_content = """# Keep the document heading

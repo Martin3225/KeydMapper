@@ -240,7 +240,7 @@ class Config:
                 if source_bindings.get(key) != value:
                     text = self._set_mapping_in_text(text, layer, key, value)
 
-        return text
+        return self.format_source_structure(text)
 
     @staticmethod
     def _section_spans(lines: list[str], name: str) -> list[tuple[int, int]]:
@@ -260,6 +260,61 @@ class Config:
             if section_name == name:
                 spans.append((start, end))
         return spans
+
+    @staticmethod
+    def format_source_structure(text: str) -> str:
+        """Normalize only blank lines that affect keyd section structure.
+
+        Binding spelling, comments, indentation and separators remain
+        untouched. Runs before a section become one blank line, while blank
+        lines directly between two bindings in the same section are removed.
+        """
+        lines = text.splitlines(keepends=True)
+        if not lines:
+            return text
+
+        newline = "\r\n" if "\r\n" in text else "\n"
+        formatted: list[str] = []
+        index = 0
+        while index < len(lines):
+            line = lines[index]
+            if line.strip():
+                if (
+                    _SECTION_RE.match(line.strip())
+                    and formatted
+                    and formatted[-1].strip()
+                ):
+                    if not formatted[-1].endswith(("\n", "\r")):
+                        formatted[-1] += newline
+                    formatted.append(newline)
+                formatted.append(line)
+                index += 1
+                continue
+
+            blank_start = index
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+            blank_run = lines[blank_start:index]
+            next_line = lines[index] if index < len(lines) else None
+            previous_line = formatted[-1] if formatted else None
+
+            next_is_section = bool(
+                next_line and _SECTION_RE.match(next_line.strip())
+            )
+            between_bindings = bool(
+                previous_line
+                and next_line
+                and _BINDING_RE.match(previous_line)
+                and _BINDING_RE.match(next_line)
+            )
+            if next_is_section and formatted:
+                if not formatted[-1].endswith(("\n", "\r")):
+                    formatted[-1] += newline
+                formatted.append(newline)
+            elif not between_bindings:
+                formatted.extend(blank_run)
+
+        return "".join(formatted)
 
     @classmethod
     def _set_mapping_in_text(
@@ -294,10 +349,30 @@ class Config:
         if not spans:
             return cls._append_layer(text, layer, {key: value})
 
-        _, insertion_index = spans[-1]
+        section_start, section_end = spans[-1]
+        insertion_index = section_end
+        while (
+            insertion_index > section_start + 1
+            and not lines[insertion_index - 1].strip()
+        ):
+            insertion_index -= 1
+
         if insertion_index and not lines[insertion_index - 1].endswith(("\n", "\r")):
             lines[insertion_index - 1] += "\n"
-        lines.insert(insertion_index, f"{key} = {value}\n")
+
+        indent = ""
+        separator = " = "
+        for index in range(section_start + 1, insertion_index):
+            binding_match = _BINDING_RE.match(lines[index])
+            if binding_match is not None:
+                indent = binding_match.group("indent")
+                separator = binding_match.group("separator")
+
+        newline = "\r\n" if "\r\n" in text else "\n"
+        lines.insert(
+            insertion_index,
+            f"{indent}{key}{separator}{value}{newline}",
+        )
         return "".join(lines)
 
     @staticmethod

@@ -9,10 +9,12 @@ available as a live, editable preview.
 
 - Visual editing for layers, bindings, macros, overloads, oneshots, and other
   keyd actions
+- Key-name suggestions while typing literal bindings and shortcuts
 - Live config preview with syntax highlighting and completion
 - Round-trip text editing without removing comments or unsupported directives
 - Custom physical keyboard and mouse layouts
-- Safe Apply, Enable, and Disable operations through a restricted Polkit helper
+- Safe Apply, Enable, Disable, and physical-input recording operations through
+  a restricted Polkit helper
 
 KeydMapper is intended for Linux systems running keyd. A bad mapping can make
 input unusable; keyd's emergency stop sequence is
@@ -42,9 +44,14 @@ sudo systemctl enable --now keyd
 keyd-mapper
 ```
 
-The first system change in each KeydMapper session opens a Polkit
-authentication dialog. The restricted helper remains available only for that
-application session and exits when KeydMapper closes.
+The first system change or physical-key recording in each KeydMapper session
+opens a Polkit authentication dialog. The restricted helper remains available
+only for that application session and exits when KeydMapper closes.
+
+Physical-key recording briefly stops the keyd service so `keyd monitor` sees
+the device's original events instead of keyd's remapped virtual output. The
+helper restores the service after a key is captured, when recording is
+cancelled, or after the 30-second timeout.
 
 ## Development
 

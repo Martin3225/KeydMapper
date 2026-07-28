@@ -27,6 +27,7 @@ class ConfigSourceMixin:
         )
         self._pending_source_text: str | None = None
         self._saved_source = ""
+        self._source_model_refresh = False
         self._setup_history_state()
 
         self._validation_timer = QTimer(self)
@@ -48,12 +49,6 @@ class ConfigSourceMixin:
         source_header.addWidget(source_title)
         source_header.addStretch()
 
-        self.edit_source_btn = QToolButton()
-        self.edit_source_btn.setText("Edit config")
-        self.edit_source_btn.setCheckable(True)
-        self.edit_source_btn.toggled.connect(self._set_source_editing)
-        source_header.addWidget(self.edit_source_btn)
-
         self.expand_source_btn = QToolButton()
         self.expand_source_btn.setText("Expand")
         self.expand_source_btn.setCheckable(True)
@@ -69,10 +64,11 @@ class ConfigSourceMixin:
         self.source_status.setWordWrap(True)
 
         self.source_editor = KeydSourceEditor()
-        self.source_editor.setReadOnly(True)
         self.source_editor.setToolTip(
-            "Live keyd configuration source. Press Ctrl+Space for suggestions."
+            "Editable live keyd configuration. Ctrl+Space: suggestions, "
+            "Alt+Up/Down: move lines, Ctrl+S: format."
         )
+        self.source_editor.format_requested.connect(self._format_source_editor)
         if self._has_live_source:
             self.source_editor.setPlainText(self.config.source())
             self.source_editor.set_completion_layers(self.config.layer_order)
@@ -106,14 +102,64 @@ class ConfigSourceMixin:
         if self._has_live_source:
             self._run_keyd_validation()
 
-    def _set_source_editing(self, editing: bool) -> None:
-        """Toggle explicit manual editing of the generated config."""
-        self.source_editor.setReadOnly(not editing)
-        self.edit_source_btn.setText("Done editing" if editing else "Edit config")
-        if editing:
-            self.source_editor.setFocus()
-        else:
-            self._commit_source_history()
+    def _format_source_editor(self) -> None:
+        """Apply conservative structural formatting and preserve text selection."""
+        source = self.source_editor.toPlainText()
+        formatted = Config.format_source_structure(source)
+        if formatted == source:
+            return
+
+        cursor = self.source_editor.textCursor()
+        source_lines = source.split("\n")
+        formatted_lines = formatted.split("\n")
+
+        def position_marker(position: int) -> tuple[int | None, int, int]:
+            line_number = source.count("\n", 0, position)
+            line_start = source.rfind("\n", 0, position) + 1
+            column = position - line_start
+            if (
+                line_number < len(source_lines)
+                and source_lines[line_number].strip()
+            ):
+                ordinal = sum(
+                    bool(line.strip())
+                    for line in source_lines[:line_number]
+                )
+                return ordinal, line_number, column
+            return None, line_number, column
+
+        def marker_position(marker: tuple[int | None, int, int]) -> int:
+            ordinal, old_line, column = marker
+            target_line = min(old_line, max(0, len(formatted_lines) - 1))
+            if ordinal is not None:
+                nonblank_index = -1
+                for index, line in enumerate(formatted_lines):
+                    if line.strip():
+                        nonblank_index += 1
+                    if nonblank_index == ordinal:
+                        target_line = index
+                        break
+            prefix_length = sum(
+                len(line) + 1 for line in formatted_lines[:target_line]
+            )
+            return prefix_length + min(
+                column,
+                len(formatted_lines[target_line]),
+            )
+
+        anchor_marker = position_marker(cursor.anchor())
+        position_marker_value = position_marker(cursor.position())
+        scroll_position = self.source_editor.verticalScrollBar().value()
+        self.source_editor.setPlainText(formatted)
+
+        restored = self.source_editor.textCursor()
+        restored.setPosition(marker_position(anchor_marker))
+        restored.setPosition(
+            marker_position(position_marker_value),
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        self.source_editor.setTextCursor(restored)
+        self.source_editor.verticalScrollBar().setValue(scroll_position)
 
     def _toggle_source_preview(self) -> None:
         self._set_source_preview_visible(not self._source_preview_visible)
@@ -145,7 +191,6 @@ class ConfigSourceMixin:
         self.config_panel.setMaximumHeight(16777215 if visible else collapsed_height)
         self.source_editor.setVisible(visible)
         self.source_status.setVisible(visible)
-        self.edit_source_btn.setVisible(visible)
         self.expand_source_btn.setVisible(visible)
         self.toggle_source_btn.setText("Hide" if visible else "Show")
 
@@ -197,7 +242,7 @@ class ConfigSourceMixin:
         self._record_history(text)
         self._update_source_status()
         self._update_overall_status()
-        if focus_key and self.source_editor.isReadOnly():
+        if focus_key:
             self._focus_source_location(self._current_layer, focus_key)
 
     def _on_source_text_changed(self) -> None:
@@ -224,7 +269,11 @@ class ConfigSourceMixin:
         self.keyd_action.on_layer_changed(current_layer)
         self.delete_layer_btn.setEnabled(current_layer != "main")
         self._refresh_scene_values()
-        self._on_selection_changed()
+        self._source_model_refresh = True
+        try:
+            self._on_selection_changed()
+        finally:
+            self._source_model_refresh = False
 
     def _update_source_status(self) -> None:
         """Display syntax state; save/apply state belongs in the toolbar."""
@@ -285,6 +334,10 @@ class ConfigSourceMixin:
         self, layer: str, key: str | None = None
     ) -> None:
         """Reveal a binding in a layer, falling back to the layer declaration."""
+        if self._source_model_refresh or self.source_editor.hasFocus():
+            # Manual source editing owns the cursor. Validation may refresh
+            # the visual model, but must not move or select source text.
+            return
         current_section: str | None = None
         layer_line = -1
         target_line = -1
@@ -308,7 +361,11 @@ class ConfigSourceMixin:
         cursor = QTextCursor(
             self.source_editor.document().findBlockByNumber(target_line)
         )
-        if key and target_line != layer_line:
+        if (
+            self.source_editor.isReadOnly()
+            and key
+            and target_line != layer_line
+        ):
             cursor.select(QTextCursor.SelectionType.LineUnderCursor)
         self.source_editor.setTextCursor(cursor)
         if key is None:

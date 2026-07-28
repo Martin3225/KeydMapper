@@ -12,15 +12,18 @@ from keyd.actions import (
     format_action,
     parse_action,
 )
+from keyd.key_recorder import KeyRecorder
 from keyd.key_validator import get_valid_keys
-from PySide6.QtCore import Qt, QStringListModel
+from PySide6.QtCore import Qt, QStringListModel, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QCompleter,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -52,6 +55,23 @@ class KeydActionEditor(ConfigActionWidget):
         self._loading = False
         self._current_action_name = next(iter(ACTION_BY_NAME))
         self._field_widgets: dict[str, QWidget] = {}
+        self._record_buttons: dict[
+            QPushButton,
+            tuple[QLineEdit, ActionFieldKind],
+        ] = {}
+        self._dynamic_record_buttons: list[QPushButton] = []
+        self._record_target: tuple[
+            QLineEdit,
+            ActionFieldKind,
+            QPushButton,
+        ] | None = None
+        self._recorder = KeyRecorder(
+            getattr(editor.config, "device_id", None),
+            capture_shortcut=True,
+            parent=self,
+        )
+        self._recorder.key_recorded.connect(self._on_recorded_input)
+        self._recorder.error_occurred.connect(self._on_recording_error)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -78,7 +98,11 @@ class KeydActionEditor(ConfigActionWidget):
             "keyd's matching macro-capable form automatically."
         )
         self._macro_input.textEdited.connect(self._apply)
-        layout.addWidget(self._macro_input)
+        self._macro_input_container = self._with_record_button(
+            self._macro_input,
+            ActionFieldKind.MACRO_EXPRESSION,
+        )
+        layout.addWidget(self._macro_input_container)
 
         self._held_key_checkbox = QCheckBox("Act as a key while held")
         self._held_key_checkbox.toggled.connect(self._on_held_key_toggled)
@@ -87,7 +111,11 @@ class KeydActionEditor(ConfigActionWidget):
         self._held_key_input = QLineEdit()
         self._held_key_input.setPlaceholderText("a")
         self._held_key_input.textEdited.connect(self._apply)
-        layout.addWidget(self._held_key_input)
+        self._held_key_input_container = self._with_record_button(
+            self._held_key_input,
+            ActionFieldKind.ACTION_EXPRESSION,
+        )
+        layout.addWidget(self._held_key_input_container)
 
         self._reset_button = QPushButton("Reset binding")
         self._reset_button.clicked.connect(self._reset)
@@ -162,6 +190,10 @@ class KeydActionEditor(ConfigActionWidget):
 
     def _rebuild_fields(self) -> None:
         """Build controls from the shared action specification."""
+        self._stop_recording()
+        for button in self._dynamic_record_buttons:
+            self._record_buttons.pop(button, None)
+        self._dynamic_record_buttons.clear()
         while self._fields_layout.rowCount():
             self._fields_layout.removeRow(0)
         self._field_widgets.clear()
@@ -171,8 +203,118 @@ class KeydActionEditor(ConfigActionWidget):
         for field in spec.fields:
             widget = self._create_field_widget(field)
             self._field_widgets[field.argument_id] = widget
-            self._fields_layout.addRow(f"{field.label}:", widget)
+            row_widget: QWidget = widget
+            if isinstance(widget, QLineEdit) and field.input_kind in {
+                ActionFieldKind.KEY_SEQUENCE,
+                ActionFieldKind.ACTION_EXPRESSION,
+                ActionFieldKind.MACRO_BODY,
+                ActionFieldKind.MACRO_EXPRESSION,
+            }:
+                row_widget = self._with_record_button(
+                    widget,
+                    field.input_kind,
+                    dynamic=True,
+                )
+            self._fields_layout.addRow(f"{field.label}:", row_widget)
         self._update_additional_controls()
+
+    def _with_record_button(
+        self,
+        line_edit: QLineEdit,
+        input_kind: ActionFieldKind,
+        *,
+        dynamic: bool = False,
+    ) -> QWidget:
+        """Place one line edit beside a button backed by the shared recorder."""
+        container = QWidget()
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(line_edit, stretch=1)
+
+        button = QPushButton("Record")
+        button.setToolTip(
+            "Temporarily pause keyd and insert physical input from keyd monitor."
+        )
+        button.clicked.connect(
+            lambda checked=False, target=line_edit, kind=input_kind, control=button:
+            self._toggle_recording(target, kind, control)
+        )
+        row.addWidget(button)
+        self._record_buttons[button] = (line_edit, input_kind)
+        if dynamic:
+            self._dynamic_record_buttons.append(button)
+        return container
+
+    def _toggle_recording(
+        self,
+        target: QLineEdit,
+        input_kind: ActionFieldKind,
+        button: QPushButton,
+    ) -> None:
+        """Start one field-targeted capture or cancel the active capture."""
+        if self._recorder.is_recording:
+            self._stop_recording()
+            return
+        self._record_target = (target, input_kind, button)
+        self._recorder.start()
+        self._update_record_buttons()
+
+    def _stop_recording(self) -> None:
+        self._recorder.stop()
+        self._record_target = None
+        self._update_record_buttons()
+
+    def _update_record_buttons(self) -> None:
+        active_button = (
+            self._record_target[2]
+            if self._recorder.is_recording and self._record_target
+            else None
+        )
+        for button in self._record_buttons:
+            button.setText("◼ Stop" if button is active_button else "Record")
+            button.setEnabled(active_button is None or button is active_button)
+
+    @staticmethod
+    def _append_recorded_value(
+        current: str,
+        recorded: str,
+        input_kind: ActionFieldKind,
+    ) -> str:
+        """Insert a captured shortcut in the syntax expected by one field."""
+        current = current.strip()
+        if input_kind is ActionFieldKind.MACRO_BODY:
+            return " ".join(part for part in (current, recorded) if part)
+        if input_kind is ActionFieldKind.MACRO_EXPRESSION:
+            if not current:
+                return f"macro({recorded})"
+            if current.startswith("macro(") and current.endswith(")"):
+                body = current[6:-1].strip()
+                body = " ".join(part for part in (body, recorded) if part)
+                return f"macro({body})"
+        return recorded
+
+    def _on_recorded_input(self, recorded: str) -> None:
+        """Insert one captured key into the field that started recording."""
+        target = self._record_target
+        self._record_target = None
+        self._update_record_buttons()
+        if target is None:
+            return
+        line_edit, input_kind, _ = target
+        line_edit.setText(
+            self._append_recorded_value(
+                line_edit.text(),
+                recorded,
+                input_kind,
+            )
+        )
+        self._apply()
+
+    def _on_recording_error(self, message: str) -> None:
+        """Show one error for the shared recorder and reset every field button."""
+        self._record_target = None
+        self._update_record_buttons()
+        QMessageBox.warning(self, "Recording Error", message)
 
     def _create_field_widget(self, field: ActionField) -> QWidget:
         """Create the appropriate control for one action argument."""
@@ -211,6 +353,9 @@ class KeydActionEditor(ConfigActionWidget):
         values = sorted(set(get_valid_keys()) | set(action_completions()))
         completer = QCompleter(QStringListModel(values, widget), widget)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.activated.connect(
+            lambda _completion: QTimer.singleShot(0, self._apply)
+        )
         widget.setCompleter(completer)
 
     def _on_macro_toggled(self, checked: bool) -> None:
@@ -233,12 +378,12 @@ class KeydActionEditor(ConfigActionWidget):
         spec = ACTION_BY_NAME[self.current_action_name]
         supports_macro = spec.macro_function is not None
         self._macro_checkbox.setVisible(supports_macro)
-        self._macro_input.setVisible(
+        self._macro_input_container.setVisible(
             supports_macro and self._macro_checkbox.isChecked()
         )
         supports_held_key = spec.held_key_function is not None
         self._held_key_checkbox.setVisible(supports_held_key)
-        self._held_key_input.setVisible(
+        self._held_key_input_container.setVisible(
             supports_held_key and self._held_key_checkbox.isChecked()
         )
 
@@ -307,3 +452,13 @@ class KeydActionEditor(ConfigActionWidget):
         if key_item is not None:
             self.editor.set_key_mapping(key_item, "")
             self.on_selection_changed(key_item)
+
+    # pylint: disable=invalid-name
+    def hideEvent(self, event) -> None:
+        """Stop monitoring when the action form is no longer visible."""
+        self._stop_recording()
+        super().hideEvent(event)
+
+    def shutdown(self) -> None:
+        """Stop the shared physical-input recorder before editor teardown."""
+        self._stop_recording()

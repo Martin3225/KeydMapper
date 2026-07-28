@@ -50,7 +50,11 @@ class LayoutEditor(BaseEditor):
         self._device_id = device_id
         self.save_requested.connect(self._save)
 
-        self._recorder = KeyRecorder(device_id, parent=self)
+        self._recorder = KeyRecorder(
+            device_id,
+            capture_shortcut=False,
+            parent=self,
+        )
         self._recorder.key_recorded.connect(self._on_key_recorded)
 
         # Toolbar
@@ -101,7 +105,7 @@ class LayoutEditor(BaseEditor):
                 item.update()
 
     def _on_key_recorded(self, key_name: str) -> None:
-        """Apply the next logical input emitted by the active keyd config."""
+        """Apply the next physical input reported by keyd monitor."""
         self._name_input.setText(key_name)
         self._apply_key()
 

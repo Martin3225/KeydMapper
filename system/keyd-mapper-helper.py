@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Privileged, package-installed helper for atomic keyd config updates.
+"""Privileged helper for keyd config updates and physical input recording.
 
 This file must be installed root-owned and must never be executed with elevated
 privileges directly from a user-writable source checkout.
@@ -14,9 +14,11 @@ import json
 import os
 import re
 import secrets
+import select
 import stat
 import subprocess
 import sys
+import time
 
 
 CONFIG_DIRECTORY = "/etc/keyd"
@@ -24,11 +26,36 @@ KEYD_COMMAND = "/usr/bin/keyd"
 SYSTEMCTL_COMMAND = "/usr/bin/systemctl"
 LOCK_PATH = "/run/lock/keyd-mapper.lock"
 MAX_CONFIG_BYTES = 1024 * 1024
+RECORDING_TIMEOUT_SECONDS = 30
 # JSON escaping can make a valid UTF-8 config several times larger on the wire.
 MAX_REQUEST_CHARACTERS = MAX_CONFIG_BYTES * 8
 CONFIG_NAME = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9_.-]{0,126}\.(?:conf|disabled)"
 )
+DEVICE_ID = re.compile(
+    r"(?:(?:k|m):)?[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}"
+    r"(?::[0-9A-Fa-f]{8})?"
+)
+MONITOR_EVENT = re.compile(
+    r"^(?P<device>.*?)\t(?P<id>[^\t]+)\t"
+    r"(?P<key>\S+) (?P<state>down|up)\s*$"
+)
+MODIFIER_PREFIXES = {
+    "leftcontrol": "C",
+    "rightcontrol": "C",
+    "control": "C",
+    "leftshift": "S",
+    "rightshift": "S",
+    "shift": "S",
+    "leftalt": "A",
+    "alt": "A",
+    "rightalt": "G",
+    "altgr": "G",
+    "leftmeta": "M",
+    "rightmeta": "M",
+    "meta": "M",
+}
+MODIFIER_ORDER = ("C", "S", "A", "M", "G")
 
 
 class ApplyError(Exception):
@@ -106,6 +133,180 @@ def _run_checked(command: list[str], description: str) -> None:
     if result.returncode != 0:
         details = (result.stderr or result.stdout or "").strip()
         raise ApplyError(f"{description} failed: {details or result.returncode}")
+
+
+def _keyd_service_is_active() -> bool:
+    """Return whether recording must restore a running keyd service."""
+    result = subprocess.run(
+        [SYSTEMCTL_COMMAND, "is-active", "--quiet", "keyd.service"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+        env={
+            "PATH": "/usr/sbin:/usr/bin",
+            "LANG": "C.UTF-8",
+        },
+    )
+    return result.returncode == 0
+
+
+def _normalised_device_id(device_id: str | None) -> str | None:
+    """Validate a monitor filter and remove keyd's optional type prefix."""
+    if device_id in (None, "", "*"):
+        return None
+    if not isinstance(device_id, str) or not DEVICE_ID.fullmatch(device_id):
+        raise ApplyError("The device id is invalid.")
+    return device_id.removeprefix("k:").removeprefix("m:").lower()
+
+
+def _read_cancel_request() -> bool | None:
+    """Return True for cancel and None when the GUI session disappeared."""
+    request = _read_request()
+    if request is None:
+        return None
+    if request != {"operation": "cancel_record"}:
+        raise ApplyError("Only recording cancellation is allowed while monitoring.")
+    return True
+
+
+def _record_original_input(
+    device_id: str | None,
+    capture_shortcut: bool,
+) -> tuple[dict[str, object], bool]:
+    """Pause keyd, capture one original event, and restore the service."""
+    _check_system_paths()
+    wanted_device = _normalised_device_id(device_id)
+    service_was_active = _keyd_service_is_active()
+    monitor: subprocess.Popen[str] | None = None
+    parent_closed = False
+    response: dict[str, object] = {"ok": True, "cancelled": True}
+
+    if service_was_active:
+        _run_checked(
+            [SYSTEMCTL_COMMAND, "stop", "keyd.service"],
+            "stopping keyd for physical input recording",
+        )
+
+    try:
+        # pylint: disable-next=consider-using-with
+        monitor = subprocess.Popen(
+            [KEYD_COMMAND, "monitor"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+            env={
+                "PATH": "/usr/sbin:/usr/bin",
+                "LANG": "C.UTF-8",
+            },
+        )
+        assert monitor.stdout is not None
+        pressed_modifiers: dict[str, str] = {}
+        pressed_keys: set[str] = set()
+        captured_keys: set[str] = set()
+        deadline = time.monotonic() + RECORDING_TIMEOUT_SECONDS
+
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ApplyError(
+                    "Physical input recording timed out after 30 seconds."
+                )
+            ready, _, _ = select.select(
+                [sys.stdin, monitor.stdout],
+                [],
+                [],
+                remaining,
+            )
+            if not ready:
+                continue
+
+            if sys.stdin in ready:
+                cancellation = _read_cancel_request()
+                if cancellation is None:
+                    parent_closed = True
+                break
+
+            line = monitor.stdout.readline()
+            if not line:
+                details = (
+                    monitor.stderr.read().strip()
+                    if monitor.stderr is not None
+                    else ""
+                )
+                raise ApplyError(
+                    details or "keyd monitor stopped before reporting a key."
+                )
+
+            event = MONITOR_EVENT.match(line)
+            if event is None:
+                continue
+            event_device = event.group("id").lower()
+            if wanted_device is not None and not (
+                event_device == wanted_device
+                or event_device.startswith(f"{wanted_device}:")
+            ):
+                continue
+
+            key = event.group("key")
+            state = event.group("state")
+            if state == "down":
+                pressed_keys.add(key)
+            else:
+                pressed_keys.discard(key)
+
+            if "key" in response:
+                if captured_keys.isdisjoint(pressed_keys):
+                    break
+                continue
+
+            modifier = MODIFIER_PREFIXES.get(key)
+            if not capture_shortcut:
+                if state == "down":
+                    response = {"ok": True, "key": key}
+                    captured_keys = {key}
+                continue
+
+            if modifier is not None:
+                if state == "down":
+                    pressed_modifiers[key] = modifier
+                    continue
+                if key in pressed_modifiers:
+                    pressed_modifiers.pop(key)
+                    response = {"ok": True, "key": key}
+                    captured_keys = {key}
+                    if captured_keys.isdisjoint(pressed_keys):
+                        break
+                continue
+
+            if state == "down":
+                active = set(pressed_modifiers.values())
+                prefixes = [
+                    prefix for prefix in MODIFIER_ORDER if prefix in active
+                ]
+                response = {
+                    "ok": True,
+                    "key": "-".join((*prefixes, key)),
+                }
+                captured_keys = {*pressed_modifiers, key}
+    finally:
+        if monitor is not None and monitor.poll() is None:
+            monitor.terminate()
+            try:
+                monitor.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                monitor.kill()
+                monitor.wait(timeout=2)
+        if service_was_active:
+            _run_checked(
+                [SYSTEMCTL_COMMAND, "start", "keyd.service"],
+                "restoring keyd after physical input recording",
+            )
+
+    return response, parent_closed
 
 
 def _unique_path(label: str) -> str:
@@ -290,6 +491,24 @@ def _apply_request(request: dict[str, object]) -> None:
         apply(_validated_source(source), name, old_name)
 
 
+def _record_request(
+    request: dict[str, object],
+) -> tuple[dict[str, object], bool]:
+    """Validate and execute one bounded keyd monitor transaction."""
+    expected_fields = {"operation", "device_id", "capture_shortcut"}
+    if set(request) != expected_fields or request.get("operation") != "record":
+        raise ApplyError("The recording request has unsupported fields.")
+    device_id = request.get("device_id")
+    capture_shortcut = request.get("capture_shortcut")
+    if device_id is not None and not isinstance(device_id, str):
+        raise ApplyError("The device id must be text or null.")
+    if not isinstance(capture_shortcut, bool):
+        raise ApplyError("The shortcut option must be true or false.")
+    _write_response({"recording": True})
+    with _transaction_lock():
+        return _record_original_input(device_id, capture_shortcut)
+
+
 def _run_session() -> int:
     """Serve validated transactions until the unprivileged parent closes stdin."""
     _write_response({"ready": True})
@@ -298,7 +517,17 @@ def _run_session() -> int:
             request = _read_request()
             if request is None:
                 return 0
-            _apply_request(request)
+            operation = request.get("operation")
+            if operation == "apply":
+                _apply_request(request)
+                response = {"ok": True}
+                parent_closed = False
+            elif operation == "record":
+                response, parent_closed = _record_request(request)
+            else:
+                raise ApplyError("The helper request has an unsupported operation.")
+            if parent_closed:
+                return 0
         except (ApplyError, OSError, subprocess.SubprocessError) as error:
             try:
                 _write_response({"ok": False, "error": str(error)})
@@ -306,7 +535,7 @@ def _run_session() -> int:
                 return 0
         else:
             try:
-                _write_response({"ok": True})
+                _write_response(response)
             except (BrokenPipeError, OSError):
                 return 0
 

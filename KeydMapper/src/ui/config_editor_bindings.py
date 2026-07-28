@@ -68,7 +68,8 @@ class ConfigBindingsMixin:
 
     def _build_config_toolbar(self) -> None:
         """Build document-level commands in the editor's top bar."""
-        self.back_btn = QPushButton("Back")
+        self.back_btn = QPushButton("← Configurations")
+        self.back_btn.setToolTip("Return to the configuration list")
         self.back_btn.clicked.connect(self._handle_back)
         self.toolbar_layout.addWidget(self.back_btn)
 

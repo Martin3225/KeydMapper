@@ -59,8 +59,8 @@ class PhysicalLayoutMixin:
         if self._layout_editor is not None:
             self.layout_record_btn = RecordButton(self._layout_editor.recorder)
             self.layout_record_btn.setToolTip(
-                "Capture the next logical key or mouse button emitted by the "
-                "active keyd configuration."
+                "Temporarily pause keyd and capture the next physical key or "
+                "mouse button with keyd monitor."
             )
             self._layout_editor.recorder.key_recorded.connect(
                 self._on_integrated_key_recorded

@@ -9,7 +9,7 @@ import re
 
 from keyd.actions import action_completions
 from keyd.key_validator import get_valid_keys
-from PySide6.QtCore import QRect, QSize, Qt, QStringListModel
+from PySide6.QtCore import QRect, QSize, Qt, QStringListModel, Signal
 from PySide6.QtGui import (
     QColor,
     QFontDatabase,
@@ -122,6 +122,8 @@ class LineNumberArea(QWidget):
 
 class KeydSourceEditor(QPlainTextEdit):
     """Code editor with line numbers, highlighting and context completion."""
+
+    format_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -273,11 +275,107 @@ class KeydSourceEditor(QPlainTextEdit):
             cursor.movePosition(QTextCursor.MoveOperation.Left)
         self.setTextCursor(cursor)
 
+    def _move_selected_lines(self, direction: int) -> None:
+        """Move the current line or selected line block one position."""
+        text = self.toPlainText()
+        lines = text.split("\n")
+        cursor = self.textCursor()
+        document = self.document()
+
+        selection_start = cursor.selectionStart()
+        selection_end = cursor.selectionEnd()
+        start_block = document.findBlock(selection_start)
+        end_block = document.findBlock(selection_end)
+        start_line = start_block.blockNumber()
+        end_line = end_block.blockNumber()
+        if (
+            selection_end > selection_start
+            and end_block.position() == selection_end
+        ):
+            end_line -= 1
+
+        last_line = len(lines) - 1
+        if lines and lines[-1] == "":
+            last_line -= 1
+        if (
+            direction < 0
+            and start_line <= 0
+            or direction > 0
+            and end_line >= last_line
+        ):
+            return
+
+        cursor_line = cursor.blockNumber()
+        cursor_column = cursor.positionInBlock()
+        anchor_block = document.findBlock(cursor.anchor())
+        anchor_line = anchor_block.blockNumber()
+        anchor_column = cursor.anchor() - anchor_block.position()
+
+        def moved_line(line_number: int) -> int:
+            if direction < 0:
+                if start_line <= line_number <= end_line:
+                    return line_number - 1
+                if line_number == start_line - 1:
+                    return end_line
+            else:
+                if start_line <= line_number <= end_line:
+                    return line_number + 1
+                if line_number == end_line + 1:
+                    return start_line
+            return line_number
+
+        if direction < 0:
+            lines[start_line - 1 : end_line + 1] = (
+                lines[start_line : end_line + 1]
+                + [lines[start_line - 1]]
+            )
+        else:
+            lines[start_line : end_line + 2] = (
+                [lines[end_line + 1]]
+                + lines[start_line : end_line + 1]
+            )
+
+        scroll_position = self.verticalScrollBar().value()
+        self.setPlainText("\n".join(lines))
+
+        def document_position(line_number: int, column: int) -> int:
+            block = self.document().findBlockByNumber(line_number)
+            return block.position() + min(column, len(block.text()))
+
+        restored = self.textCursor()
+        restored.setPosition(
+            document_position(moved_line(anchor_line), anchor_column)
+        )
+        restored.setPosition(
+            document_position(moved_line(cursor_line), cursor_column),
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        self.setTextCursor(restored)
+        self.verticalScrollBar().setValue(scroll_position)
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # pylint: disable=invalid-name
         """Handle indentation and display context-sensitive completions."""
         if self.isReadOnly():
             self.completer.popup().hide()
             super().keyPressEvent(event)
+            return
+
+        if (
+            event.modifiers() == Qt.KeyboardModifier.AltModifier
+            and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down)
+        ):
+            self.completer.popup().hide()
+            self._move_selected_lines(
+                -1 if event.key() == Qt.Key.Key_Up else 1
+            )
+            return
+
+        if (
+            event.modifiers() == Qt.KeyboardModifier.ControlModifier
+            and event.key() == Qt.Key.Key_S
+        ):
+            self.completer.popup().hide()
+            self.format_requested.emit()
             return
 
         popup = self.completer.popup()
@@ -322,3 +420,9 @@ class KeydSourceEditor(QPlainTextEdit):
             + popup.verticalScrollBar().sizeHint().width()
         )
         self.completer.complete(completion_rect)
+
+    def focusOutEvent(self, event) -> None:  # pylint: disable=invalid-name
+        """Request formatting when the user actually leaves the editor."""
+        super().focusOutEvent(event)
+        if event.reason() != Qt.FocusReason.PopupFocusReason:
+            self.format_requested.emit()

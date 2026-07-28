@@ -228,6 +228,76 @@ a = C-a
     assert "layer()" not in editor.source_editor.toPlainText()
 
 
+def test_valid_source_refresh_does_not_select_line_while_editing():
+    """Validation must leave the manual source cursor safe for the next key."""
+    editor, _, _ = _create_live_editor_with_selected_key()
+    source = """[ids]
+1234:5678
+
+[main]
+a = right
+"""
+    editor.source_editor.setPlainText(source)
+    cursor = editor.source_editor.textCursor()
+    position = source.index("right") + len("right")
+    cursor.setPosition(position)
+    editor.source_editor.setTextCursor(cursor)
+
+    with patch(
+        "ui.config_editor_source.Config.check_source_text",
+        return_value=(True, "keyd syntax valid"),
+    ):
+        editor._run_keyd_validation()
+
+    cursor = editor.source_editor.textCursor()
+    assert cursor.hasSelection() is False
+    assert cursor.position() == position
+
+    editor.source_editor.insertPlainText("x")
+    assert "a = rightx" in editor.source_editor.toPlainText()
+
+
+def test_ctrl_s_formats_source_structure_and_preserves_cursor():
+    """Ctrl+S formats spacing without turning the current line into a selection."""
+    editor, _, _ = _create_live_editor_with_selected_key()
+    source = """[ids]
+1234:5678
+
+[main]
+a = left
+
+b = right
+[nav]
+h = left
+"""
+    editor.source_editor.setPlainText(source)
+    cursor = editor.source_editor.textCursor()
+    position = source.index("b = right") + len("b =")
+    cursor.setPosition(position)
+    editor.source_editor.setTextCursor(cursor)
+
+    QTest.keyClick(
+        editor.source_editor,
+        Qt.Key.Key_S,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+
+    assert editor.source_editor.toPlainText() == """[ids]
+1234:5678
+
+[main]
+a = left
+b = right
+
+[nav]
+h = left
+"""
+    cursor = editor.source_editor.textCursor()
+    assert cursor.block().text() == "b = right"
+    assert cursor.positionInBlock() == len("b =")
+    assert cursor.hasSelection() is False
+
+
 def test_typing_comment_character_by_character_never_changes_selected_key():
     """Exercise the real per-keystroke textChanged path, including partial comments."""
     editor, config, key = _create_live_editor_with_selected_key()
@@ -302,22 +372,18 @@ def test_editor_panels_have_no_artificial_resize_limits():
     assert editor.inspector_splitter.childrenCollapsible() is True
 
 
-def test_generated_config_is_read_only_until_edit_is_requested():
-    """Manual config editing must be an explicit action."""
+def test_generated_config_is_always_editable_without_mode_button():
+    """The source behaves like an editor without an Edit/Done mode switch."""
     editor, _, _ = _create_live_editor_with_selected_key()
 
-    assert editor.source_editor.isReadOnly() is True
-    original_source = editor.source_editor.toPlainText()
-    QTest.keyClick(editor.source_editor, Qt.Key.Key_Tab)
-    assert editor.source_editor.toPlainText() == original_source
-
-    editor.edit_source_btn.setChecked(True)
     assert editor.source_editor.isReadOnly() is False
-    assert editor.edit_source_btn.text() == "Done editing"
-
-    editor.edit_source_btn.setChecked(False)
-    assert editor.source_editor.isReadOnly() is True
-    assert editor.edit_source_btn.text() == "Edit config"
+    assert not hasattr(editor, "edit_source_btn")
+    original_source = editor.source_editor.toPlainText()
+    cursor = editor.source_editor.textCursor()
+    cursor.movePosition(QTextCursor.MoveOperation.End)
+    editor.source_editor.setTextCursor(cursor)
+    QTest.keyClick(editor.source_editor, Qt.Key.Key_Tab)
+    assert editor.source_editor.toPlainText() == original_source + "    "
 
 
 def test_generated_config_can_be_collapsed_to_its_header():
@@ -409,9 +475,11 @@ a = layer(
 
 
 def test_save_flushes_pending_valid_source_edit():
-    """Saving immediately after typing must persist the draft, not the old model."""
+    """Saving persists the current draft without closing the editor."""
     editor, config, key = _create_live_editor_with_selected_key()
     config.save = MagicMock()
+    close_requested = MagicMock()
+    editor.cancel_requested.connect(close_requested)
     editor.source_editor.setPlainText(
         """[ids]
 1234:5678
@@ -426,6 +494,15 @@ a = right
     assert config.layers["main"]["a"] == "right"
     assert key.key_value == "right"
     config.save.assert_called_once()
+    close_requested.assert_not_called()
+
+
+def test_back_button_names_its_destination() -> None:
+    """Top-left navigation communicates where it takes the user."""
+    editor, _, _ = _create_live_editor_with_selected_key()
+
+    assert editor.back_btn.text() == "← Configurations"
+    assert editor.back_btn.toolTip() == "Return to the configuration list"
 
 
 def test_visual_change_uses_shared_undo_and_redo_history():
@@ -444,13 +521,15 @@ def test_visual_change_uses_shared_undo_and_redo_history():
     assert config.layers["main"]["a"] == "left"
 
 
-def test_visual_binding_change_reveals_generated_config_line():
-    """The preview immediately shows which line a Binding change generated."""
+def test_visual_binding_change_reveals_line_without_selecting_it():
+    """Visual changes may navigate source but cannot arm it for replacement."""
     editor, _, key = _create_live_editor_with_selected_key()
 
     editor.set_key_mapping(key, "layer(nav)")
 
-    assert "a = layer(nav)" in editor.source_editor.textCursor().selectedText()
+    cursor = editor.source_editor.textCursor()
+    assert cursor.block().text() == "a = layer(nav)"
+    assert cursor.hasSelection() is False
 
 
 def test_keyd_action_is_loaded_as_normalized_visual_form():
@@ -539,7 +618,9 @@ def test_selecting_mapped_key_scrolls_to_binding_in_active_layer():
 
     editor._on_selection_changed()
 
-    assert editor.source_editor.textCursor().selectedText() == "a = right"
+    cursor = editor.source_editor.textCursor()
+    assert cursor.block().text() == "a = right"
+    assert cursor.hasSelection() is False
     editor.source_editor.ensureCursorVisible.assert_called()
     editor.source_editor.scroll_line_to_top.assert_not_called()
 

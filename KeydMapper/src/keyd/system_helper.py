@@ -20,6 +20,10 @@ POLICY_PATH = (
 _CONFIG_NAME = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9_.-]{0,126}\.(?:conf|disabled)"
 )
+_DEVICE_ID = re.compile(
+    r"(?:(?:k|m):)?[0-9A-Fa-f]{4}:[0-9A-Fa-f]{4}"
+    r"(?::[0-9A-Fa-f]{8})?"
+)
 
 
 class SystemHelperError(Exception):
@@ -77,6 +81,8 @@ class _SystemHelperSession:
     def __init__(self) -> None:
         self._process: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._record_active = False
 
     def apply(
         self,
@@ -98,9 +104,7 @@ class _SystemHelperSession:
                 separators=(",", ":"),
             )
             try:
-                assert process.stdin is not None
-                process.stdin.write(request + "\n")
-                process.stdin.flush()
+                self._write_line(process, request)
                 response = self._read_json_line(process)
             except (BrokenPipeError, OSError, SystemHelperError) as error:
                 self._discard_process()
@@ -115,6 +119,93 @@ class _SystemHelperSession:
                 raise SystemHelperError(
                     str(message) if message else "The system transaction failed."
                 )
+
+    def record_key(
+        self,
+        device_id: str | None,
+        capture_shortcut: bool,
+        cancel_event: threading.Event,
+    ) -> str | None:
+        """Capture one original input event while serializing helper operations."""
+        with self._lock:
+            if cancel_event.is_set():
+                return None
+            process = self._ensure_started()
+            request = json.dumps(
+                {
+                    "operation": "record",
+                    "device_id": device_id,
+                    "capture_shortcut": capture_shortcut,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            try:
+                self._write_line(process, request)
+                acknowledgement = self._read_json_line(process)
+                if acknowledgement.get("recording") is not True:
+                    message = acknowledgement.get("error")
+                    raise SystemHelperError(
+                        str(message)
+                        if message
+                        else "The helper could not start physical input recording."
+                    )
+                self._record_active = True
+                if cancel_event.is_set():
+                    self.cancel_recording()
+                response = self._read_json_line(process)
+            except (BrokenPipeError, OSError, SystemHelperError) as error:
+                self._discard_process()
+                if isinstance(error, SystemHelperError):
+                    raise
+                raise SystemHelperError(
+                    "The privileged helper connection was lost."
+                ) from error
+            finally:
+                self._record_active = False
+
+            if response.get("ok") is not True:
+                message = response.get("error")
+                raise SystemHelperError(
+                    str(message) if message else "Physical input recording failed."
+                )
+            if response.get("cancelled") is True:
+                return None
+            key = response.get("key")
+            if not isinstance(key, str) or not key:
+                raise SystemHelperError(
+                    "The privileged helper returned an invalid key."
+                )
+            return key
+
+    def cancel_recording(self) -> None:
+        """Ask an in-flight record operation to restore keyd and finish."""
+        process = self._process
+        if (
+            not self._record_active
+            or process is None
+            or process.poll() is not None
+        ):
+            return
+        request = json.dumps(
+            {"operation": "cancel_record"},
+            separators=(",", ":"),
+        )
+        try:
+            self._write_line(process, request)
+        except (BrokenPipeError, OSError):
+            self._discard_process()
+
+    def _write_line(
+        self,
+        process: subprocess.Popen[str],
+        line: str,
+    ) -> None:
+        """Write one complete protocol frame without interleaving threads."""
+        with self._write_lock:
+            assert process.stdin is not None
+            process.stdin.write(line + "\n")
+            process.stdin.flush()
 
     def _ensure_started(self) -> subprocess.Popen[str]:
         process = self._process
@@ -211,6 +302,7 @@ class _SystemHelperSession:
 
     def close(self) -> None:
         """Close stdin so the root helper exits even during interpreter shutdown."""
+        self.cancel_recording()
         with self._lock:
             process = self._process
             self._process = None
@@ -251,6 +343,29 @@ def apply_config(
     """Apply one config through the helper authorized for this app session."""
     _validate_names(name, old_name)
     _SESSION.apply(source, name, old_name)
+
+
+def record_key(
+    device_id: str | None,
+    *,
+    capture_shortcut: bool,
+    cancel_event: threading.Event,
+) -> str | None:
+    """Record physical input through the authenticated helper session."""
+    if device_id not in (None, "", "*") and (
+        len(device_id) > 20 or not _DEVICE_ID.fullmatch(device_id)
+    ):
+        raise SystemHelperError(f"Unsupported device id: {device_id!r}")
+    return _SESSION.record_key(
+        device_id,
+        capture_shortcut,
+        cancel_event,
+    )
+
+
+def cancel_key_recording() -> None:
+    """Cancel the active physical-input transaction, if any."""
+    _SESSION.cancel_recording()
 
 
 def close_system_helper() -> None:

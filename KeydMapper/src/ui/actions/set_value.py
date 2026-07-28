@@ -4,9 +4,10 @@ from typing import TYPE_CHECKING
 
 from keyd.key_recorder import KeyRecorder
 from keyd.key_validator import get_valid_keys, is_valid_value
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QModelIndex, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
+    QCompleter,
     QHBoxLayout,
     QLineEdit,
     QMenu,
@@ -20,6 +21,27 @@ from ui.record_button import RecordButton
 
 if TYPE_CHECKING:
     from ui.config_editor import ConfigEditor
+
+
+class KeyValueCompleter(QCompleter):
+    """Complete only the base key while preserving shortcut modifiers."""
+
+    def splitPath(self, path: str) -> list[str]:  # pylint: disable=invalid-name
+        """Use the text after the last modifier separator as the query."""
+        return [path.rsplit("-", 1)[-1]]
+
+    def pathFromIndex(  # pylint: disable=invalid-name
+        self,
+        index: QModelIndex,
+    ) -> str:
+        """Put the completed base key back behind any typed modifiers."""
+        completion = super().pathFromIndex(index)
+        line_edit = self.widget()
+        if not isinstance(line_edit, QLineEdit):
+            return completion
+        current = line_edit.text()
+        prefix, separator, _ = current.rpartition("-")
+        return f"{prefix}{separator}{completion}" if separator else completion
 
 
 def load_key_categories() -> dict[str, list[str]]:
@@ -136,6 +158,24 @@ class SetValueAction(ConfigActionWidget):
 
         self._value_input = QLineEdit()
         self._value_input.textEdited.connect(self._apply_key_value)
+        self._key_completer = KeyValueCompleter(
+            sorted(get_valid_keys()),
+            self._value_input,
+        )
+        self._key_completer.setCaseSensitivity(
+            Qt.CaseSensitivity.CaseInsensitive
+        )
+        self._key_completer.setFilterMode(Qt.MatchFlag.MatchStartsWith)
+        self._key_completer.setCompletionMode(
+            QCompleter.CompletionMode.PopupCompletion
+        )
+        self._key_completer.activated.connect(
+            lambda _completion: QTimer.singleShot(
+                0,
+                self._apply_key_value,
+            )
+        )
+        self._value_input.setCompleter(self._key_completer)
         input_layout.addWidget(self._value_input)
 
         self._menu_btn = QToolButton()
@@ -162,13 +202,17 @@ class SetValueAction(ConfigActionWidget):
 
         layout.addLayout(mod_layout)
 
-        self._recorder = KeyRecorder(parent=self)
+        self._recorder = KeyRecorder(
+            getattr(editor.config, "device_id", None),
+            capture_shortcut=True,
+            parent=self,
+        )
         self._recorder.key_recorded.connect(self.on_key_recorded)
 
         self._record_btn = RecordButton(self._recorder)
         self._record_btn.setToolTip(
-            "Capture the next key, shortcut, mouse button, or wheel action "
-            "emitted by the active keyd configuration."
+            "Temporarily pause keyd and capture the next physical key or "
+            "shortcut with keyd monitor."
         )
         layout.addWidget(self._record_btn)
 
@@ -273,7 +317,7 @@ class SetValueAction(ConfigActionWidget):
         self._apply_key_value()
 
     def on_key_recorded(self, key_name: str) -> None:
-        """Apply a logical keyd-compatible input captured through Qt."""
+        """Apply a physical keyd-compatible input captured by keyd monitor."""
         self._value_input.setText(key_name)
         self._apply_key_value()
 

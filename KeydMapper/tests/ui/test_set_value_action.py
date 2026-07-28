@@ -1,10 +1,8 @@
 """Tests for the SetValueAction UI component."""
 # pylint: disable=protected-access, redefined-outer-name
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from PySide6.QtCore import Qt
-from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from ui.actions.set_value import SetValueAction
 from ui.key_item import KeyItem
@@ -78,23 +76,62 @@ def test_set_value_action_validation_styling():
     assert action._value_input.styleSheet() == ""
 
 
-def test_set_value_recording_uses_active_keyd_output_without_password():
-    """The Binding recorder consumes Qt's virtual keyd output directly."""
+def test_binding_key_completion_preserves_typed_modifiers() -> None:
+    """Suggestions complete the base key rather than replacing C-S-."""
     mock_editor = MagicMock()
+    mock_editor.config.device_id = "1234:5678"
+    with patch(
+        "ui.actions.set_value.get_valid_keys",
+        return_value=frozenset({"delete", "down", "enter"}),
+    ):
+        action = SetValueAction(mock_editor)
+
+    action._value_input.setText("C-S-del")
+    completer = action._key_completer
+    delete_index = completer.model().index(0, 0)
+
+    assert completer.splitPath("C-S-del") == ["del"]
+    assert completer.pathFromIndex(delete_index) == "C-S-delete"
+    assert action._value_input.completer() is completer
+
+
+def test_binding_completion_revalidates_and_updates_model() -> None:
+    """Accepting a suggestion cannot leave the partial value applied internally."""
+    mock_editor = MagicMock()
+    mock_editor.config.device_id = "1234:5678"
     key = MagicMock(spec=KeyItem)
     mock_editor.get_selected_key_item.return_value = key
     action = SetValueAction(mock_editor)
-    action._record_btn.setEnabled(True)
-    action._value_input.setFocus()
 
-    action._record_btn.click()
-    QTest.keyClick(
-        action._value_input,
-        Qt.Key.Key_A,
-        Qt.KeyboardModifier.ControlModifier,
-    )
-    QApplication.processEvents()
+    with patch(
+        "ui.actions.set_value.is_valid_value",
+        side_effect=lambda value: value == "delete",
+    ):
+        action._value_input.setText("del")
+        action._apply_key_value()
+        assert "orange" in action._value_input.styleSheet()
+        mock_editor.set_key_mapping.reset_mock()
+
+        # QLineEdit inserts the accepted completion without textEdited.
+        action._value_input.setText("delete")
+        action._key_completer.activated.emit("delete")
+        QApplication.processEvents()
+
+    assert action._value_input.styleSheet() == ""
+    mock_editor.set_key_mapping.assert_called_once_with(key, "delete")
+
+
+def test_set_value_recording_uses_physical_keyd_monitor():
+    """The Binding recorder applies the helper's physical shortcut result."""
+    mock_editor = MagicMock()
+    mock_editor.config.device_id = "1234:5678"
+    key = MagicMock(spec=KeyItem)
+    mock_editor.get_selected_key_item.return_value = key
+    action = SetValueAction(mock_editor)
+
+    action._recorder.key_recorded.emit("C-a")
 
     assert action._value_input.text() == "C-a"
     mock_editor.set_key_mapping.assert_called_with(key, "C-a")
-    assert action._recorder.is_recording is False
+    assert action._recorder._device_id == "1234:5678"
+    assert action._recorder._capture_shortcut is True

@@ -124,13 +124,14 @@ class ConfigEditor(
 
         try:
             self.config.save()
-            self._saved_source = source
+            self._sync_source_editor()
+            self._saved_source = self.source_editor.toPlainText()
             self._update_overall_status()
-            self.cancel_requested.emit()
         except ConfigSaveError as error:
             QMessageBox.critical(self, "Error", str(error))
 
     def shutdown(self) -> None:
         """Stop editor-owned capture and detach the shared scene safely."""
         self.set_value_action.shutdown()
+        self.keyd_action.shutdown()
         super().shutdown()
