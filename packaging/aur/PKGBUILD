@@ -1,7 +1,7 @@
 # Maintainer: Martin Vacek <mpvvac at gmail dot com>
 
 pkgname=keyd-mapper
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Visual editor for keyd configuration files"
 arch=('any')
