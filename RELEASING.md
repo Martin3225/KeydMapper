@@ -110,7 +110,25 @@ GitHub repository.
   `.SRCINFO`.
 - Packaging-only fix: keep `pkgver`, increment `pkgrel`, and regenerate
   `.SRCINFO`.
-- Always create and push the corresponding GitHub tag before publishing the AUR
-  update, because the AUR build reads that tag.
+- For a new KeydMapper version, always create and push the corresponding GitHub
+  tag before publishing the AUR update, because the AUR build reads that tag.
 - After the tag is public, regenerate the source checksum with `makepkg -g` or
   `updpkgsums`, update `b2sums`, and regenerate `.SRCINFO`.
+
+The local update and synchronization can be prepared with:
+
+```bash
+./scripts/update-aur.sh 0.2.0 /path/to/keyd-mapper-aur
+```
+
+This checks the release tag, updates the checksum and `.SRCINFO`, builds the
+package, copies the allowlisted files to the separate AUR checkout, and shows
+both diffs. Review and commit the changes manually. To also commit and push both
+repositories, pass `--publish` explicitly:
+
+```bash
+./scripts/update-aur.sh --publish 0.2.0 /path/to/keyd-mapper-aur
+```
+
+Use `--pkgrel 2` for a packaging-only revision and `--skip-build` only when a
+clean package build has already been verified separately.

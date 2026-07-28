@@ -9,8 +9,9 @@ from keyd.layout import Layout
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialogButtonBox
 from ui.config_editor import ConfigEditor
+from ui.config_editor_bindings import LayerNameDialog
 from ui.key_item import KeyItem
 from ui.layout_editor import LayoutEditor
 
@@ -646,7 +647,7 @@ def test_layer_rail_creation_does_not_remap_selected_key():
     editor.set_key_mapping(key, "left")
 
     with patch(
-        "ui.config_editor_bindings.QInputDialog.getText",
+        "ui.config_editor_bindings.LayerNameDialog.get_name",
         return_value=("nav:C", True),
     ):
         editor._create_new_layer()
@@ -654,6 +655,27 @@ def test_layer_rail_creation_does_not_remap_selected_key():
     assert "nav:C" in config.layers
     assert config.layers["main"]["a"] == "left"
     assert "layer(nav)" not in config.source()
+
+
+def test_new_layer_dialog_composes_exactly_one_modifier():
+    """Choosing a modifier updates the preview and replaces the prior choice."""
+    dialog = LayerNameDialog()
+    dialog.name_edit.setText("navigation")
+
+    dialog.modifier_buttons["A"].click()
+
+    assert dialog.layer_name() == "navigation:A"
+    assert dialog.preview_label.text() == "Result: navigation:A"
+    assert dialog.modifier_buttons["A"].isChecked() is True
+
+    dialog.modifier_buttons["C"].click()
+
+    assert dialog.layer_name() == "navigation:C"
+    assert dialog.modifier_buttons["A"].isChecked() is False
+    assert dialog.modifier_buttons["C"].isChecked() is True
+    assert dialog.dialog_buttons.button(
+        QDialogButtonBox.StandardButton.Ok
+    ).isEnabled()
 
 
 def test_f2_renames_focused_sidebar_layer_and_keeps_selection():

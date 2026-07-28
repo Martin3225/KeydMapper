@@ -8,15 +8,20 @@ from keyd.config import ConfigSaveError
 from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import QKeyEvent, QStandardItemModel
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMenu,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
@@ -47,6 +52,93 @@ def _normalise_layer_name(name: str) -> str:
     suffix = suffix.strip()
     suffix = suffix.upper() if len(suffix) == 1 else suffix.lower()
     return f"{base}:{suffix}"
+
+
+class LayerNameDialog(QDialog):
+    """Collect a layer base name and at most one keyd modifier."""
+
+    MODIFIERS = (
+        ("", "None"),
+        ("C", "Ctrl"),
+        ("A", "Alt"),
+        ("M", "Meta"),
+        ("S", "Shift"),
+        ("G", "AltGr"),
+    )
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("New Layer")
+
+        layout = QVBoxLayout(self)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Layer name:"))
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("layerName")
+        name_row.addWidget(self.name_edit, stretch=1)
+        layout.addLayout(name_row)
+
+        layout.addWidget(QLabel("Modifier:"))
+        modifier_row = QHBoxLayout()
+        self.modifier_group = QButtonGroup(self)
+        self.modifier_group.setExclusive(True)
+        self.modifier_buttons: dict[str, QRadioButton] = {}
+        for index, (modifier, label) in enumerate(self.MODIFIERS):
+            button = QRadioButton(label)
+            button.setProperty("keydModifier", modifier)
+            self.modifier_group.addButton(button, index)
+            self.modifier_buttons[modifier] = button
+            modifier_row.addWidget(button)
+        self.modifier_buttons[""].setChecked(True)
+        modifier_row.addStretch()
+        layout.addLayout(modifier_row)
+
+        self.preview_label = QLabel("Result:")
+        layout.addWidget(self.preview_label)
+
+        self.dialog_buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.dialog_buttons.accepted.connect(self.accept)
+        self.dialog_buttons.rejected.connect(self.reject)
+        layout.addWidget(self.dialog_buttons)
+
+        self.name_edit.textChanged.connect(self._update_preview)
+        self.modifier_group.buttonToggled.connect(self._update_preview)
+        self._update_preview()
+        self.name_edit.setFocus()
+
+    def layer_name(self) -> str:
+        """Return the canonical name represented by the form."""
+        name = self.name_edit.text().strip()
+        checked_button = self.modifier_group.checkedButton()
+        modifier = (
+            str(checked_button.property("keydModifier"))
+            if checked_button is not None
+            else ""
+        )
+        if modifier:
+            base = name.split(":", 1)[0].strip()
+            return f"{base}:{modifier}"
+        return _normalise_layer_name(name)
+
+    def _update_preview(self, *_args: object) -> None:
+        """Update the composed layer name and acceptance state."""
+        name = self.layer_name()
+        self.preview_label.setText(f"Result: {name}" if name else "Result:")
+        ok_button = self.dialog_buttons.button(
+            QDialogButtonBox.StandardButton.Ok
+        )
+        ok_button.setEnabled(bool(_LAYER_NAME_RE.fullmatch(name)))
+
+    @classmethod
+    def get_name(cls, parent: QWidget | None = None) -> tuple[str, bool]:
+        """Show the dialog and return its composed name and acceptance state."""
+        dialog = cls(parent)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.layer_name(), accepted
 
 
 class LayerListWidget(QListWidget):  # pylint: disable=too-few-public-methods
@@ -256,19 +348,19 @@ class ConfigBindingsMixin:
 
     def _create_new_layer(self) -> None:
         """Create a navigable layer without changing the selected binding."""
-        name, accepted = QInputDialog.getText(self, "New Layer", "Layer name:")
-        if not accepted or not name.strip():
+        name, accepted = LayerNameDialog.get_name(self)
+        if not accepted:
             return
 
-        name = name.strip()
-        if ":" in name:
-            base, modifier = name.split(":", 1)
-            modifier = modifier.strip().upper()
-            name = (
-                f"{base.strip()}:{modifier[0]}"
-                if modifier and modifier[0] in {"C", "A", "M", "S", "G"}
-                else base.strip()
+        name = _normalise_layer_name(name)
+        if not _LAYER_NAME_RE.fullmatch(name):
+            QMessageBox.warning(
+                self,
+                "Invalid layer name",
+                "Use letters, numbers, '_' or '-'. Choose at most one "
+                "modifier.",
             )
+            return
 
         if name not in self.config.layers:
             if self._has_live_source:
