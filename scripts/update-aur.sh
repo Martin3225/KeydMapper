@@ -121,24 +121,17 @@ aur_checkout=$(realpath -- "$aur_checkout")
 git -C "$aur_checkout" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
     die "AUR checkout is not a Git repository: $aur_checkout"
 
-if [[ $publish == false ]]; then
-    [[ -z $(git -C "$repo_root" status --porcelain --untracked-files=normal) ]] ||
-        die "the main repository has uncommitted changes"
-    [[ -z $(git -C "$aur_checkout" status --porcelain --untracked-files=normal) ]] ||
-        die "the AUR repository has uncommitted changes"
-else
-    require_only_expected_changes \
-        "$repo_root" \
-        packaging/aur/PKGBUILD \
-        packaging/aur/.SRCINFO
-    require_only_expected_changes \
-        "$aur_checkout" \
-        PKGBUILD \
-        .SRCINFO \
-        .gitignore \
-        LICENSE \
-        keyd-mapper.install
-fi
+require_only_expected_changes \
+    "$repo_root" \
+    packaging/aur/PKGBUILD \
+    packaging/aur/.SRCINFO
+require_only_expected_changes \
+    "$aur_checkout" \
+    PKGBUILD \
+    .SRCINFO \
+    .gitignore \
+    LICENSE \
+    keyd-mapper.install
 
 aur_branch=$(git -C "$aur_checkout" branch --show-current)
 [[ $aur_branch == master ]] ||
@@ -161,6 +154,9 @@ remote_tag_object=$(
 )
 
 if [[ -z $remote_tag_object ]]; then
+    [[ -z $(git -C "$repo_root" status --porcelain --untracked-files=normal) ]] ||
+        die "the main repository must be clean before creating a release tag"
+
     current_branch=$(git -C "$repo_root" branch --show-current)
     [[ $current_branch == main ]] ||
         die "a new release tag can only be created from main"
@@ -217,7 +213,13 @@ sed -E -i \
     -e "s/^pkgrel=.*/pkgrel=$pkgrel/" \
     "$packaging_dir/PKGBUILD"
 
+system_path=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin
 (
+    unset VIRTUAL_ENV VIRTUAL_ENV_PROMPT CONDA_PREFIX
+    unset PYTHONHOME PYTHONPATH PYENV_VERSION
+    export PATH=$system_path
+    export PYTHONNOUSERSITE=1
+
     cd "$packaging_dir"
     updpkgsums
     makepkg --printsrcinfo >.SRCINFO

@@ -149,5 +149,11 @@ In publish mode, existing changes are accepted only in the AUR metadata files
 prepared by the first run. Unrelated working-tree changes still stop the
 script.
 
+The same preparation command can also be rerun after an interrupted build. The
+script accepts existing changes only in the generated AUR metadata and
+regenerates them. It removes virtual-environment variables and uses the system
+toolchain for `makepkg`, so an activated Python `.venv` does not affect the
+package build.
+
 Use `--pkgrel 2` for a packaging-only revision and `--skip-build` only when a
 clean package build has already been verified separately.
