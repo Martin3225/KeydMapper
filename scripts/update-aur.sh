@@ -7,7 +7,11 @@ usage() {
 Usage:
   scripts/update-aur.sh [options] VERSION [AUR_CHECKOUT]
 
-Prepare the AUR package for an existing public KeydMapper release tag.
+Prepare the AUR package for a KeydMapper release.
+
+If vVERSION does not exist, the script creates an annotated tag on the current
+main commit and pushes it to origin. The main branch must be clean, synchronized
+with origin/main, and contain VERSION in pyproject.toml.
 
 Arguments:
   VERSION       Upstream version without the "v" prefix (for example 0.2.0).
@@ -20,8 +24,8 @@ Options:
   --publish     Commit and push both the GitHub packaging update and AUR update.
   -h, --help    Show this help.
 
-Without --publish, the script only prepares the changes and displays their
-status for manual review.
+Without --publish, the script publishes only a missing release tag, then
+prepares the packaging changes and displays their status for manual review.
 EOF
 }
 
@@ -32,6 +36,19 @@ die() {
 
 require_command() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+require_only_expected_changes() {
+    local repository=$1
+    shift
+    local status_args=(status --porcelain --untracked-files=normal -- .)
+    local allowed_path
+    for allowed_path in "$@"; do
+        status_args+=(":(exclude)$allowed_path")
+    done
+
+    [[ -z $(git -C "$repository" "${status_args[@]}") ]] ||
+        die "repository has changes outside the prepared AUR files: $repository"
 }
 
 pkgrel=1
@@ -104,10 +121,24 @@ aur_checkout=$(realpath -- "$aur_checkout")
 git -C "$aur_checkout" rev-parse --is-inside-work-tree >/dev/null 2>&1 ||
     die "AUR checkout is not a Git repository: $aur_checkout"
 
-[[ -z $(git -C "$repo_root" status --porcelain --untracked-files=normal) ]] ||
-    die "the main repository has uncommitted changes"
-[[ -z $(git -C "$aur_checkout" status --porcelain --untracked-files=normal) ]] ||
-    die "the AUR repository has uncommitted changes"
+if [[ $publish == false ]]; then
+    [[ -z $(git -C "$repo_root" status --porcelain --untracked-files=normal) ]] ||
+        die "the main repository has uncommitted changes"
+    [[ -z $(git -C "$aur_checkout" status --porcelain --untracked-files=normal) ]] ||
+        die "the AUR repository has uncommitted changes"
+else
+    require_only_expected_changes \
+        "$repo_root" \
+        packaging/aur/PKGBUILD \
+        packaging/aur/.SRCINFO
+    require_only_expected_changes \
+        "$aur_checkout" \
+        PKGBUILD \
+        .SRCINFO \
+        .gitignore \
+        LICENSE \
+        keyd-mapper.install
+fi
 
 aur_branch=$(git -C "$aur_checkout" branch --show-current)
 [[ $aur_branch == master ]] ||
@@ -124,10 +155,55 @@ aur_origin_head=$(git -C "$aur_checkout" rev-parse origin/master)
     die "the AUR checkout is not synchronized with origin/master"
 
 tag="v$version"
-git -C "$repo_root" rev-parse --verify --quiet "refs/tags/$tag" >/dev/null ||
-    die "local tag does not exist: $tag"
-git -C "$repo_root" ls-remote --exit-code origin "refs/tags/$tag" >/dev/null ||
-    die "tag $tag is not available on the GitHub origin"
+remote_tag_object=$(
+    git -C "$repo_root" ls-remote origin "refs/tags/$tag" |
+        awk 'NR == 1 { print $1 }'
+)
+
+if [[ -z $remote_tag_object ]]; then
+    current_branch=$(git -C "$repo_root" branch --show-current)
+    [[ $current_branch == main ]] ||
+        die "a new release tag can only be created from main"
+
+    git -C "$repo_root" fetch --quiet origin main
+    current_head=$(git -C "$repo_root" rev-parse HEAD)
+    origin_main=$(git -C "$repo_root" rev-parse origin/main)
+    [[ $current_head == "$origin_main" ]] ||
+        die "main must be synchronized with origin/main before tagging"
+
+    current_project_version=$(
+        awk -F'"' '/^version = "/ { print $2; exit }' "$repo_root/pyproject.toml"
+    )
+    [[ $current_project_version == "$version" ]] ||
+        die "pyproject.toml contains version '$current_project_version', expected '$version'"
+
+    if git -C "$repo_root" rev-parse \
+        --verify --quiet "refs/tags/$tag" >/dev/null; then
+        local_tag_commit=$(git -C "$repo_root" rev-list -n 1 "$tag")
+        [[ $local_tag_commit == "$current_head" ]] ||
+            die "local tag $tag does not point to the current main commit"
+    else
+        git -C "$repo_root" tag -a "$tag" -m "KeydMapper $version"
+        printf '\nCreated annotated release tag %s.\n' "$tag"
+    fi
+
+    git -C "$repo_root" push origin "refs/tags/$tag"
+    remote_tag_object=$(
+        git -C "$repo_root" ls-remote origin "refs/tags/$tag" |
+            awk 'NR == 1 { print $1 }'
+    )
+    [[ -n $remote_tag_object ]] ||
+        die "tag $tag was not published to origin"
+else
+    if ! git -C "$repo_root" rev-parse \
+        --verify --quiet "refs/tags/$tag" >/dev/null; then
+        git -C "$repo_root" fetch --quiet \
+            origin "refs/tags/$tag:refs/tags/$tag"
+    fi
+    local_tag_object=$(git -C "$repo_root" rev-parse "refs/tags/$tag")
+    [[ $local_tag_object == "$remote_tag_object" ]] ||
+        die "local and origin tags named $tag do not match"
+fi
 
 tag_project_version=$(
     git -C "$repo_root" show "$tag:pyproject.toml" |

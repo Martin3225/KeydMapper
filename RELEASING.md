@@ -54,6 +54,9 @@ git tag -a v0.1.0 -m "KeydMapper 0.1.0"
 git push origin v0.1.0
 ```
 
+These two commands can be skipped when using `scripts/update-aur.sh` after CI;
+the script creates and pushes the same annotated tag when it does not exist.
+
 Create the GitHub release from that tag, either in the GitHub web interface or
 with GitHub CLI:
 
@@ -115,20 +118,36 @@ GitHub repository.
 - After the tag is public, regenerate the source checksum with `makepkg -g` or
   `updpkgsums`, update `b2sums`, and regenerate `.SRCINFO`.
 
-The local update and synchronization can be prepared with:
+After the release commit has passed CI and `main` is synchronized with
+`origin/main`, the release tag, local update, and synchronization can be
+prepared with:
 
 ```bash
-./scripts/update-aur.sh 0.2.0 /path/to/keyd-mapper-aur
+./scripts/update-aur.sh 0.2.0
 ```
 
-This checks the release tag, updates the checksum and `.SRCINFO`, builds the
+If `v0.2.0` does not exist, the script verifies the version in
+`pyproject.toml`, creates an annotated `v0.2.0` tag on the current `main`
+commit, and pushes it to `origin`. If the tag already exists, it is verified
+and reused. The script then updates the checksum and `.SRCINFO`, builds the
 package, copies the allowlisted files to the separate AUR checkout, and shows
-both diffs. Review and commit the changes manually. To also commit and push both
-repositories, pass `--publish` explicitly:
+both diffs.
+
+`AUR_CHECKOUT` is optional and defaults to the sibling `../keyd-mapper-aur`
+directory. The full command syntax is
+`./scripts/update-aur.sh VERSION [AUR_CHECKOUT]`; pass a path only when the AUR
+checkout is elsewhere.
+
+After reviewing the prepared changes, run the same command with `--publish` to
+commit and push both repositories:
 
 ```bash
-./scripts/update-aur.sh --publish 0.2.0 /path/to/keyd-mapper-aur
+./scripts/update-aur.sh --publish 0.2.0
 ```
+
+In publish mode, existing changes are accepted only in the AUR metadata files
+prepared by the first run. Unrelated working-tree changes still stop the
+script.
 
 Use `--pkgrel 2` for a packaging-only revision and `--skip-build` only when a
 clean package build has already been verified separately.
