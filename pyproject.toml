@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keydmapper"
-version = "0.2.0"
+version = "0.2.1"
 description = "A visual editor for keyd configuration files"
 readme = "README.md"
 requires-python = ">=3.10"
