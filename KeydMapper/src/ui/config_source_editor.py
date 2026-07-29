@@ -355,6 +355,35 @@ class KeydSourceEditor(QPlainTextEdit):
         self.setTextCursor(restored)
         self.verticalScrollBar().setValue(scroll_position)
 
+    def _handle_command_shortcut(self, event: QKeyEvent) -> bool:
+        """Handle editor commands before ordinary text input."""
+        modifiers = event.modifiers()
+        key = event.key()
+        control = Qt.KeyboardModifier.ControlModifier
+        control_shift = (
+            Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.ShiftModifier
+        )
+        handled = True
+
+        if modifiers == control and key == Qt.Key.Key_Z:
+            self.undo_requested.emit()
+        elif modifiers == control_shift and key == Qt.Key.Key_Z:
+            self.redo_requested.emit()
+        elif (
+            modifiers == Qt.KeyboardModifier.AltModifier
+            and key in (Qt.Key.Key_Up, Qt.Key.Key_Down)
+        ):
+            self._move_selected_lines(-1 if key == Qt.Key.Key_Up else 1)
+        elif modifiers == control_shift and key == Qt.Key.Key_F:
+            self.format_requested.emit()
+        else:
+            handled = False
+
+        if handled:
+            self.completer.popup().hide()
+        return handled
+
     def keyPressEvent(self, event: QKeyEvent) -> None:  # pylint: disable=invalid-name
         """Handle indentation and display context-sensitive completions."""
         if self.isReadOnly():
@@ -362,46 +391,7 @@ class KeydSourceEditor(QPlainTextEdit):
             super().keyPressEvent(event)
             return
 
-        if (
-            event.modifiers() == Qt.KeyboardModifier.ControlModifier
-            and event.key() == Qt.Key.Key_Z
-        ):
-            self.completer.popup().hide()
-            self.undo_requested.emit()
-            return
-
-        if (
-            event.modifiers()
-            == (
-                Qt.KeyboardModifier.ControlModifier
-                | Qt.KeyboardModifier.ShiftModifier
-            )
-            and event.key() == Qt.Key.Key_Z
-        ):
-            self.completer.popup().hide()
-            self.redo_requested.emit()
-            return
-
-        if (
-            event.modifiers() == Qt.KeyboardModifier.AltModifier
-            and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down)
-        ):
-            self.completer.popup().hide()
-            self._move_selected_lines(
-                -1 if event.key() == Qt.Key.Key_Up else 1
-            )
-            return
-
-        if (
-            event.modifiers()
-            == (
-                Qt.KeyboardModifier.ControlModifier
-                | Qt.KeyboardModifier.ShiftModifier
-            )
-            and event.key() == Qt.Key.Key_F
-        ):
-            self.completer.popup().hide()
-            self.format_requested.emit()
+        if self._handle_command_shortcut(event):
             return
 
         popup = self.completer.popup()
