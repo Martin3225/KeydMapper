@@ -57,16 +57,21 @@ def test_alt_arrow_moves_selected_line_block_together() -> None:
     assert editor.textCursor().selectedText() == "two\u2029three"
 
 
-def test_ctrl_s_and_real_focus_out_request_formatting() -> None:
+def test_ctrl_shift_f_and_real_focus_out_request_formatting() -> None:
     """Both explicit save gesture and leaving the editor request formatting."""
     editor = KeydSourceEditor()
     requested = MagicMock()
     editor.format_requested.connect(requested)
+    editor.show()
+    editor.activateWindow()
+    editor.setFocus()
+    QApplication.processEvents()
 
     QTest.keyClick(
         editor,
-        Qt.Key.Key_S,
-        Qt.KeyboardModifier.ControlModifier,
+        Qt.Key.Key_F,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.ShiftModifier,
     )
     focus_out = QFocusEvent(
         QEvent.Type.FocusOut,
@@ -75,6 +80,7 @@ def test_ctrl_s_and_real_focus_out_request_formatting() -> None:
     QApplication.sendEvent(editor, focus_out)
 
     assert requested.call_count == 2
+    editor.close()
 
 
 def test_completion_popup_focus_does_not_request_formatting() -> None:

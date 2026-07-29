@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 from keyd.actions import parse_action
 from keyd.config import Config, ConfigSaveError
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QGraphicsScene, QMessageBox
 from ui.base_editor import BaseEditor
 from ui.config_editor_bindings import LITERAL_BINDING, ConfigBindingsMixin
@@ -55,6 +57,7 @@ class ConfigEditor(
         self._build_binding_panel()
         self._build_source_panel()
         self._build_layout_inspector()
+        self._setup_keyboard_shortcuts()
 
         self._overlay.hide()
         self._refresh_layer_widgets(self._current_layer)
@@ -80,6 +83,43 @@ class ConfigEditor(
         self._active_action.on_selection_changed(key)
         if key:
             self._focus_source_location(self._current_layer, key.key_name)
+
+    def _setup_keyboard_shortcuts(self) -> None:
+        """Register document commands for this editor and all of its children."""
+        callbacks = {
+            "save": ("Ctrl+S", self._save),
+            "format": ("Ctrl+Shift+F", self._format_source_editor),
+            "undo": ("Ctrl+Z", self._undo_shortcut),
+            "redo": ("Ctrl+Shift+Z", self._redo_shortcut),
+            "back": ("Esc", self._handle_back),
+        }
+        self._shortcut_actions: dict[str, QAction] = {}
+        for name, (shortcut, callback) in callbacks.items():
+            action = QAction(name.replace("_", " ").title(), self)
+            action.setShortcut(QKeySequence(shortcut))
+            action.setShortcutContext(
+                Qt.ShortcutContext.WidgetWithChildrenShortcut
+            )
+            action.triggered.connect(callback)
+            self.addAction(action)
+            self._shortcut_actions[name] = action
+
+        self.back_btn.setToolTip("Return to the configuration list (Esc)")
+        self.undo_btn.setToolTip("Undo the last configuration change (Ctrl+Z)")
+        self.redo_btn.setToolTip(
+            "Redo the last configuration change (Ctrl+Shift+Z)"
+        )
+        self.save_apply_btn.setToolTip("Save and apply (Ctrl+S)")
+
+    def _undo_shortcut(self) -> None:
+        """Undo configuration history unless geometry editing owns the canvas."""
+        if not self._editing_layout:
+            self.undo_config_change()
+
+    def _redo_shortcut(self) -> None:
+        """Redo configuration history unless geometry editing owns the canvas."""
+        if not self._editing_layout:
+            self.redo_config_change()
 
     def _select_binding_editor_for(self, key: KeyItem | None) -> None:
         """Choose structured actions for parsed keyd calls, literal input otherwise."""

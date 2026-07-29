@@ -258,8 +258,8 @@ a = right
     assert "a = rightx" in editor.source_editor.toPlainText()
 
 
-def test_ctrl_s_formats_source_structure_and_preserves_cursor():
-    """Ctrl+S formats spacing without turning the current line into a selection."""
+def test_ctrl_shift_f_formats_source_structure_and_preserves_cursor():
+    """Ctrl+Shift+F formats spacing without selecting the current line."""
     editor, _, _ = _create_live_editor_with_selected_key()
     source = """[ids]
 1234:5678
@@ -276,11 +276,16 @@ h = left
     position = source.index("b = right") + len("b =")
     cursor.setPosition(position)
     editor.source_editor.setTextCursor(cursor)
+    editor.show()
+    editor.activateWindow()
+    editor.back_btn.setFocus()
+    QApplication.processEvents()
 
     QTest.keyClick(
-        editor.source_editor,
-        Qt.Key.Key_S,
-        Qt.KeyboardModifier.ControlModifier,
+        editor.back_btn,
+        Qt.Key.Key_F,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.ShiftModifier,
     )
 
     assert editor.source_editor.toPlainText() == """[ids]
@@ -297,6 +302,7 @@ h = left
     assert cursor.block().text() == "b = right"
     assert cursor.positionInBlock() == len("b =")
     assert cursor.hasSelection() is False
+    editor.close()
 
 
 def test_typing_comment_character_by_character_never_changes_selected_key():
@@ -475,8 +481,8 @@ a = layer(
     assert "keyd syntax valid" not in editor.source_status.text()
 
 
-def test_save_flushes_pending_valid_source_edit():
-    """Saving persists the current draft without closing the editor."""
+def test_ctrl_s_action_flushes_pending_valid_source_edit():
+    """Ctrl+S persists the current draft without closing the editor."""
     editor, config, key = _create_live_editor_with_selected_key()
     config.save = MagicMock()
     close_requested = MagicMock()
@@ -489,13 +495,24 @@ def test_save_flushes_pending_valid_source_edit():
 a = right
 """
     )
+    editor.show()
+    editor.activateWindow()
+    editor.source_editor.setFocus()
+    QApplication.processEvents()
 
-    editor._save()
+    assert editor._shortcut_actions["save"].shortcut().toString() == "Ctrl+S"
+    QTest.keyClick(
+        editor.source_editor,
+        Qt.Key.Key_S,
+        Qt.KeyboardModifier.ControlModifier,
+    )
+    QApplication.processEvents()
 
     assert config.layers["main"]["a"] == "right"
     assert key.key_value == "right"
     config.save.assert_called_once()
     close_requested.assert_not_called()
+    editor.close()
 
 
 def test_back_button_names_its_destination() -> None:
@@ -503,23 +520,75 @@ def test_back_button_names_its_destination() -> None:
     editor, _, _ = _create_live_editor_with_selected_key()
 
     assert editor.back_btn.text() == "← Configurations"
-    assert editor.back_btn.toolTip() == "Return to the configuration list"
+    assert editor.back_btn.toolTip() == "Return to the configuration list (Esc)"
 
 
-def test_visual_change_uses_shared_undo_and_redo_history():
-    """Top-bar history spans generated source and the visual keyboard model."""
+def test_escape_requests_return_to_configuration_list() -> None:
+    """Esc leaves the normal configuration editor."""
+    editor, _, _ = _create_live_editor_with_selected_key()
+    close_requested = MagicMock()
+    editor.cancel_requested.connect(close_requested)
+    editor.show()
+    editor.activateWindow()
+    editor.source_editor.setFocus()
+    QApplication.processEvents()
+
+    QTest.keyClick(editor.source_editor, Qt.Key.Key_Escape)
+
+    close_requested.assert_called_once()
+    editor.close()
+
+
+def test_editor_shortcuts_use_widget_with_children_context() -> None:
+    """Document commands remain active while a nested editor control has focus."""
+    editor, _, _ = _create_live_editor_with_selected_key()
+
+    expected = {
+        "save": "Ctrl+S",
+        "format": "Ctrl+Shift+F",
+        "undo": "Ctrl+Z",
+        "redo": "Ctrl+Shift+Z",
+        "back": "Esc",
+    }
+    assert {
+        name: action.shortcut().toString()
+        for name, action in editor._shortcut_actions.items()
+    } == expected
+    assert all(
+        action.shortcutContext()
+        == Qt.ShortcutContext.WidgetWithChildrenShortcut
+        for action in editor._shortcut_actions.values()
+    )
+
+
+def test_shortcuts_use_shared_undo_and_redo_history():
+    """Ctrl+Z and Ctrl+Shift+Z span source and visual keyboard changes."""
     editor, config, key = _create_live_editor_with_selected_key()
     editor.set_key_mapping(key, "left")
     assert editor.overall_status.text() == "Unsaved changes"
     assert editor.undo_btn.isEnabled() is True
+    editor.show()
+    editor.activateWindow()
+    editor.source_editor.setFocus()
+    QApplication.processEvents()
 
-    editor.undo_config_change()
+    QTest.keyClick(
+        editor.source_editor,
+        Qt.Key.Key_Z,
+        Qt.KeyboardModifier.ControlModifier,
+    )
     assert key.key_value == ""
     assert "a" not in config.layers["main"]
 
-    editor.redo_config_change()
+    QTest.keyClick(
+        editor.source_editor,
+        Qt.Key.Key_Z,
+        Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.ShiftModifier,
+    )
     assert key.key_value == "left"
     assert config.layers["main"]["a"] == "left"
+    editor.close()
 
 
 def test_visual_binding_change_reveals_line_without_selecting_it():
@@ -771,12 +840,17 @@ def test_back_from_layout_discards_geometry_without_leaving_config():
     close_requested = MagicMock()
     editor.cancel_requested.connect(close_requested)
     editor.enter_layout_mode()
+    editor.show()
+    editor.activateWindow()
+    editor.layout_name_input.setFocus()
+    QApplication.processEvents()
 
-    editor._handle_back()
+    QTest.keyClick(editor.layout_name_input, Qt.Key.Key_Escape)
 
     layout_editor.reload_saved_layout.assert_called_once()
     close_requested.assert_not_called()
     assert editor._editing_layout is False
+    editor.close()
 
 
 def test_integrated_key_inspector_renames_selected_physical_key():

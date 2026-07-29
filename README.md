@@ -53,6 +53,20 @@ the device's original events instead of keyd's remapped virtual output. The
 helper restores the service after a key is captured, when recording is
 cancelled, or after the 30-second timeout.
 
+## Keyboard shortcuts
+
+- `Ctrl+N`: create a configuration
+- `Ctrl+S`: save and apply the current configuration or physical layout
+- `Ctrl+Shift+F`: format the generated keyd configuration
+- `Ctrl+Z` / `Ctrl+Shift+Z`: undo / redo configuration changes
+- `Esc`: return to the configuration list, or leave physical-layout mode
+- `Ctrl+Q`: quit KeydMapper
+- `F1` or `Ctrl+?`: show the complete in-app shortcut reference
+
+On the physical-layout canvas, use `Insert` to add a key, `Delete` to remove
+selected keys, `Ctrl+A` to select all keys, and `Ctrl+C` / `Ctrl+V` to copy or
+paste them.
+
 ## Development
 
 ```bash

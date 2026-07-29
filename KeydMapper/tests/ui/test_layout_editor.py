@@ -139,3 +139,24 @@ def test_layout_editor_copy_paste() -> None:
     mock_scene.addItem.assert_called_once()
     added_item = mock_scene.addItem.call_args[0][0]
     assert isinstance(added_item, KeyItem)
+
+
+def test_layout_editor_select_all_selects_only_keys() -> None:
+    """Ctrl+A's controller selects every physical key and ignores other items."""
+    mock_scene = MagicMock()
+    mock_view = MagicMock()
+    editor = LayoutEditor(
+        device_id="test_device",
+        scene=mock_scene,
+        view=mock_view,
+    )
+    first_key = MagicMock(spec=KeyItem)
+    second_key = MagicMock(spec=KeyItem)
+    other_item = MagicMock()
+    mock_scene.items.return_value = [first_key, other_item, second_key]
+
+    editor._select_all_keys()
+
+    first_key.setSelected.assert_called_once_with(True)
+    second_key.setSelected.assert_called_once_with(True)
+    other_item.setSelected.assert_not_called()

@@ -85,7 +85,12 @@ class PhysicalLayoutMixin:
         layout.addLayout(actions)
         layout.addStretch()
         layout.addWidget(
-            QLabel("Drag: move key\nCtrl + drag: snap to grid\nScroll: zoom")
+            QLabel(
+                "Insert: add key · Delete: remove\n"
+                "Ctrl+A: select all · Ctrl+C/V: copy/paste\n"
+                "Drag: move · Ctrl+drag: snap to grid\n"
+                "Scroll: zoom"
+            )
         )
         self.inspector_stack.addWidget(self.layout_inspector)
 

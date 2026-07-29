@@ -124,6 +124,8 @@ class KeydSourceEditor(QPlainTextEdit):
     """Code editor with line numbers, highlighting and context completion."""
 
     format_requested = Signal()
+    undo_requested = Signal()
+    redo_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -361,6 +363,26 @@ class KeydSourceEditor(QPlainTextEdit):
             return
 
         if (
+            event.modifiers() == Qt.KeyboardModifier.ControlModifier
+            and event.key() == Qt.Key.Key_Z
+        ):
+            self.completer.popup().hide()
+            self.undo_requested.emit()
+            return
+
+        if (
+            event.modifiers()
+            == (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.ShiftModifier
+            )
+            and event.key() == Qt.Key.Key_Z
+        ):
+            self.completer.popup().hide()
+            self.redo_requested.emit()
+            return
+
+        if (
             event.modifiers() == Qt.KeyboardModifier.AltModifier
             and event.key() in (Qt.Key.Key_Up, Qt.Key.Key_Down)
         ):
@@ -371,8 +393,12 @@ class KeydSourceEditor(QPlainTextEdit):
             return
 
         if (
-            event.modifiers() == Qt.KeyboardModifier.ControlModifier
-            and event.key() == Qt.Key.Key_S
+            event.modifiers()
+            == (
+                Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.ShiftModifier
+            )
+            and event.key() == Qt.Key.Key_F
         ):
             self.completer.popup().hide()
             self.format_requested.emit()

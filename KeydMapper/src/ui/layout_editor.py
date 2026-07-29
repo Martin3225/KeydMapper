@@ -83,7 +83,12 @@ class LayoutEditor(BaseEditor):
 
         self.panel_layout.addStretch()
         self.panel_layout.addWidget(
-            QLabel("Scroll: zoom\nCtrl + drag: snap to grid\nMiddle mouse: pan")
+            QLabel(
+                "Insert: add key · Delete: remove\n"
+                "Ctrl+A: select all · Ctrl+C/V: copy/paste\n"
+                "Scroll: zoom · Ctrl+drag: snap to grid\n"
+                "Middle mouse: pan"
+            )
         )
 
         self._clipboard: list[tuple[float, float, float, float]] = []
@@ -95,6 +100,7 @@ class LayoutEditor(BaseEditor):
 
         self._view.delete_requested.connect(self._delete_key)
         self._view.add_requested.connect(self._add_button)
+        self._view.select_all_requested.connect(self._select_all_keys)
         self._view.copy_requested.connect(self._copy_keys)
         self._view.paste_requested.connect(self._paste_keys)
         for item in self._scene.items():
@@ -217,6 +223,12 @@ class LayoutEditor(BaseEditor):
         for item in self._scene.selectedItems():
             if isinstance(item, KeyItem):
                 self._scene.removeItem(item)
+
+    def _select_all_keys(self) -> None:
+        """Select every physical key on the layout canvas."""
+        for item in self._scene.items():
+            if isinstance(item, KeyItem):
+                item.setSelected(True)
 
     def _copy_keys(self) -> None:
         """Copies the geometry of selected KeyItems to the clipboard."""

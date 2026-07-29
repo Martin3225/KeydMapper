@@ -20,6 +20,7 @@ class LayoutView(QGraphicsView):
 
     delete_requested = Signal()
     add_requested = Signal()
+    select_all_requested = Signal()
     copy_requested = Signal()
     paste_requested = Signal()
 
@@ -37,6 +38,7 @@ class LayoutView(QGraphicsView):
             try:
                 self.delete_requested.disconnect()
                 self.add_requested.disconnect()
+                self.select_all_requested.disconnect()
                 self.copy_requested.disconnect()
                 self.paste_requested.disconnect()
             except RuntimeError:
@@ -55,6 +57,11 @@ class LayoutView(QGraphicsView):
         elif key == Qt.Key.Key_V and ctrl:
             self.paste_requested.emit()
         elif key == Qt.Key.Key_A and ctrl:
+            self.select_all_requested.emit()
+        elif (
+            key == Qt.Key.Key_Insert
+            and event.modifiers() == Qt.KeyboardModifier.NoModifier
+        ):
             self.add_requested.emit()
         else:
             super().keyPressEvent(event)

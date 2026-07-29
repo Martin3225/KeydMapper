@@ -66,9 +66,11 @@ class ConfigSourceMixin:
         self.source_editor = KeydSourceEditor()
         self.source_editor.setToolTip(
             "Editable live keyd configuration. Ctrl+Space: suggestions, "
-            "Alt+Up/Down: move lines, Ctrl+S: format."
+            "Alt+Up/Down: move lines, Ctrl+Shift+F: format."
         )
         self.source_editor.format_requested.connect(self._format_source_editor)
+        self.source_editor.undo_requested.connect(self._undo_shortcut)
+        self.source_editor.redo_requested.connect(self._redo_shortcut)
         if self._has_live_source:
             self.source_editor.setPlainText(self.config.source())
             self.source_editor.set_completion_layers(self.config.layer_order)
